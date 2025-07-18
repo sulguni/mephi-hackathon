@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher, html, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Chat, InaccessibleMessage, Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 import states
 
@@ -71,10 +71,7 @@ async def try_finding_user_by_name(message: Message):
 
     pass
 
-@dp.message(Command('admin'), states.IsAdmin())
-async def admin_command(message: Message) -> None:
-
-    admin_kb= [
+admin_kb= [
         [InlineKeyboardButton(text="Редактировать данные доноров", callback_data='donor_edit')],
         [InlineKeyboardButton(text="Изменить информацию в боте", callback_data='bot_edit')],
         [InlineKeyboardButton(text="Просмотреть статистику", callback_data='view_statistics')],
@@ -85,11 +82,63 @@ async def admin_command(message: Message) -> None:
          InlineKeyboardButton(text="Получить статистику", callback_data='get_statistics')],
     ]
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=admin_kb)
+keyboard = InlineKeyboardMarkup(inline_keyboard=admin_kb)
 
+
+@dp.message(Command('admin'), states.IsAdmin())
+async def admin_command(message: Message) -> None:
     await message.answer('Добро пожаловать в панель организатора!\n'
                          'Выберите желаемое действие:', reply_markup=keyboard)
 
+@dp.callback_query(F.data == "admin_menu")
+async def back_to_admin(callback: CallbackQuery):
+    await callback.message.edit_text('Добро пожаловать в панель организатора!\n'
+                         'Выберите желаемое действие:', reply_markup=keyboard)
+
+kb_return = [
+    [InlineKeyboardButton(text="Вернуться", callback_data='admin_menu')]]
+keyboard_return = InlineKeyboardMarkup(inline_keyboard=kb_return)
+
+@dp.callback_query(F.data == "donor_edit")
+async def donor_edit(callback: CallbackQuery):
+    await callback.message.edit_text("Отправьте данные которые желаете изменить/добавить",
+                                     reply_markup=keyboard_return)
+
+@dp.callback_query(F.data == "bot_edit")
+async def donor_edit(callback: CallbackQuery):
+    await callback.message.edit_text("Выберите, что хотите изменить",
+                                     reply_markup=keyboard_return)
+
+@dp.callback_query(F.data == "view_statistics")
+async def donor_edit(callback: CallbackQuery):
+    await callback.message.edit_text("Статистика:",
+                                     reply_markup=keyboard_return)
+
+@dp.callback_query(F.data == "reply_to_questions")
+async def donor_edit(callback: CallbackQuery):
+    await callback.message.edit_text("Вопрос:",
+                                     reply_markup=keyboard_return)
+
+@dp.callback_query(F.data == "newsletter")
+async def donor_edit(callback: CallbackQuery):
+    await callback.message.edit_text("Выберите категорию для рассылки",
+                                     reply_markup=keyboard_return)
+
+@dp.callback_query(F.data == "create_event")
+async def donor_edit(callback: CallbackQuery):
+    await callback.message.edit_text("Для создания мероприятия введите дату и "
+                                     "центр крови",
+                                     reply_markup=keyboard_return)
+
+@dp.callback_query(F.data == "upload_statistics")
+async def donor_edit(callback: CallbackQuery):
+    await callback.message.edit_text("Для загрузки статистики отправьте файл в формате exel",
+                                     reply_markup=keyboard_return)
+
+@dp.callback_query(F.data == "get_statistics")
+async def donor_edit(callback: CallbackQuery):
+    await callback.message.edit_text("Вот ваш документ",
+                                     reply_markup=keyboard_return)
 
 async def main() -> None:
     # Initialize Bot instance with default bot properties which will be passed to all API calls

@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from re import L
+import re
 import sys
 from os import getenv
 

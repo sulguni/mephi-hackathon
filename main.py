@@ -104,8 +104,9 @@ keyboard_edit_return = InlineKeyboardMarkup(inline_keyboard=kb_edit_return)
 
 @dp.callback_query(F.data == "donor_edit")
 async def donor_edit(callback: CallbackQuery):
-    await callback.message.edit_text("Отправьте данные которые желаете изменить/добавить",
-                                     reply_markup=keyboard_edit_return)
+
+    await callback.message.edit_text("Введите номер телефона пользователя, чьи данные вы хотите изменить",
+                                     reply_markup=keyboard_return)
 
 @dp.callback_query(F.data == 'edit_by_phone')
 async def start_edit_by_phone(callback: CallbackQuery, state: FSMContext):
@@ -202,6 +203,8 @@ async def handle_text_list(message: Message, state: FSMContext):
 kb_return = [
     [InlineKeyboardButton(text="Вернуться", callback_data='admin_menu')]]
 keyboard_return = InlineKeyboardMarkup(inline_keyboard=kb_return)
+
+
 
 @dp.callback_query(F.data == "bot_edit")
 async def donor_edit(callback: CallbackQuery):

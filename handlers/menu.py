@@ -1,6 +1,10 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
+from datetime import datetime
 import sqlite3
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 router = Router()
 
 INFO_TEXTS = {
@@ -244,8 +248,8 @@ async def about_me(callback: types.CallbackQuery):
                 f"<b>Контактные данные:</b> {contacts or 'не указаны'}\n"
                 f"<b>Телефон:</b> {phone or 'не указан'}\n\n"
                 f"<b>Статистика донаций:</b>\n"
-                f"• В ЦД Гаврилова: {'да' if gavrilova else 'нет'}\n"
-                f"• В ЦД ФМБА: {'да' if fmba else 'нет'}\n"
+                f"• В ЦД Гаврилова: {gavrilova}\n"
+                f"• В ЦД ФМБА: {fmba}\n"
                 f"• Последняя сдача в ЦД Гаврилова: {last_gavrilov or 'нет данных'}\n"
                 f"• Последняя сдача в ЦД ФМБА: {last_fmba or 'нет данных'}"
             )
@@ -263,4 +267,146 @@ async def about_me(callback: types.CallbackQuery):
         text=message_text,
         parse_mode="HTML"
     )
+    await callback.answer()
+
+
+def parse_custom_date(date_str):
+    """Парсит дату в формате DD-MM-YYYY с обработкой возможных ошибок"""
+    try:
+        # Удаляем возможные пробелы и преобразуем дату
+        date_str = date_str.strip()
+        return datetime.strptime(date_str, "%d-%m-%Y")
+    except ValueError as e:
+        logger.error(f"Ошибка парсинга даты '{date_str}': {e}")
+        return None
+
+
+def is_future_date(date_str):
+    """Проверяет, является ли дата будущей"""
+    date_obj = parse_custom_date(date_str)
+    print(date_obj)
+    return date_obj > datetime.now() if date_obj else False
+
+
+@router.callback_query(F.data == "register_for_dd")
+async def register_for_dd(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    logger.info(f"Пользователь {user_id} начал регистрацию на ДД")
+
+    try:
+        conn = sqlite3.connect('db.db')
+        cursor = conn.cursor()
+
+        # Получаем все даты из таблицы DD
+        cursor.execute("SELECT Date FROM DD")
+        all_dates = [row[0] for row in cursor.fetchall()]
+        logger.info(f"Все даты из базы: {all_dates}")
+
+        # Фильтруем только валидные будущие даты
+        future_dates = []
+        current_date = datetime.now()
+
+        for date_str in all_dates:
+            date_obj = parse_custom_date(date_str)
+            if date_obj and date_obj > current_date:
+                future_dates.append(date_str)
+
+        logger.info(f"Будущие даты после фильтрации: {future_dates}")
+
+        if not future_dates:
+            await callback.message.answer("На данный момент нет доступных дат для регистрации.")
+            return
+
+        # Сортируем даты по хронологии
+        future_dates.sort(key=lambda x: parse_custom_date(x))
+
+        # Создаем кнопки с доступными датами
+        buttons = []
+        for date in future_dates:
+            buttons.append([types.InlineKeyboardButton(
+                text=date,
+                callback_data=f"register_date_{date}"
+            )])
+
+        # Добавляем кнопку "Назад"
+        buttons.append([types.InlineKeyboardButton(
+            text="← Назад",
+            callback_data="back_to_menu"
+        )])
+
+        keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
+
+        await callback.message.answer(
+            text="Выберите дату для регистрации:",
+            reply_markup=keyboard
+        )
+
+    except sqlite3.Error as e:
+        logger.error(f"Ошибка базы данных: {e}")
+        await callback.message.answer("Произошла ошибка при получении данных. Попробуйте позже.")
+    except Exception as e:
+        logger.error(f"Неожиданная ошибка: {e}")
+        await callback.message.answer("Произошла непредвиденная ошибка.")
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("register_date_"))
+async def process_date_selection(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    selected_date = callback.data.split("_", 2)[2]
+    logger.info(f"Пользователь {user_id} выбрал дату {selected_date}")
+
+    try:
+        conn = sqlite3.connect('db.db')
+        cursor = conn.cursor()
+
+        # Проверка существования пользователя в базе Donors
+        cursor.execute("SELECT 1 FROM Donors WHERE donorsID = ?", (user_id,))
+        if not cursor.fetchone():
+            await callback.message.answer("Сначала пройдите регистрацию в боте!")
+            return
+
+        # Проверка существующей регистрации
+        cursor.execute("""
+            SELECT 1 FROM donors_data 
+            WHERE donorID = ? AND Date = ?
+        """, (user_id, selected_date))
+
+        if cursor.fetchone():
+            await callback.message.answer("Вы уже зарегистрированы на эту дату!")
+            return
+
+        # Определяем статус донора
+        cursor.execute("SELECT GroupID FROM Donors WHERE donorsID = ?", (user_id,))
+        group_result = cursor.fetchone()
+        donor_status = "Донор" if group_result and group_result[0] else "Сотрудник"
+
+        # Регистрация
+        cursor.execute("""
+            INSERT INTO donors_data (Date, donorID, donor_status)
+            VALUES (?, ?, ?)
+        """, (selected_date, user_id, donor_status))
+
+        conn.commit()
+
+        await callback.message.answer(
+            f"✅ Вы успешно зарегистрированы на {selected_date} как {donor_status}!\n\n"
+            "Не забудьте подготовиться к донации согласно рекомендациям."
+        )
+        logger.info(f"Успешная регистрация: {user_id} на {selected_date}")
+
+    except sqlite3.Error as e:
+        logger.error(f"Ошибка базы данных: {e}")
+        await callback.message.answer("Произошла ошибка при регистрации. Попробуйте позже.")
+    except Exception as e:
+        logger.error(f"Неожиданная ошибка: {e}")
+        await callback.message.answer("Произошла непредвиденная ошибка.")
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
     await callback.answer()

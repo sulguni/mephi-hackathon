@@ -199,6 +199,7 @@ async def donor_edit(callback: CallbackQuery):
 async def create_event(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("Для создания мероприятия введите дату (dd-mm-yyyy) и "
                                      "центр крови через запятую.\n"
+                                     "Каждое мероприятие на новой строчке\n"
                                      "Пример:\n"
                                      "24-03-2024,Гаврилова",
                                      reply_markup=keyboard_return)
@@ -206,7 +207,34 @@ async def create_event(callback: CallbackQuery, state: FSMContext):
 
 @router.message(states.EventState.waiting_for_event)
 async def select_donor_field(message: Message, state: FSMContext):
-    pass
+    lines = message.text.split('\n')
+    added = 0
+
+    async with aiosqlite.connect(db.DATABASE_NAME) as con, con.cursor() as cur:
+        for i, line in enumerate(lines, 1):
+            try:
+                if not line.strip():
+                    continue
+
+                parts = [p.strip() for p in line.split(',')]
+                if len(parts) >= 2:
+                    date = parts[0]
+                    donor_center = parts[1]
+
+                    await con.execute(
+                        """INSERT OR REPLACE INTO DD
+                        (Date, donor_center)
+                        VALUES (?, ?)""",
+                        (date, donor_center)
+                    )
+                    added += 1
+            except Exception:
+                continue
+
+        await con.commit()
+
+    await message.answer(f"✅ Добавлено {added} событий")
+    await state.clear()
 
 @router.callback_query(F.data == "upload_statistics")
 async def donor_edit(callback: CallbackQuery):

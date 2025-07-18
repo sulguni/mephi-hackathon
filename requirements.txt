@@ -1,4 +1,6 @@
 aiogram
 aiosqlite
 python-dotenv
+pandas
+openpyxl
 

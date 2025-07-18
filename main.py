@@ -3,16 +3,14 @@ import logging
 import re
 import sys
 from os import getenv
-import aiosqlite
-from aiogram import Router
-from aiogram import Bot, Dispatcher, html, F
+from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 import states
-from handlers import admin_handlers
+from handlers import admin_handlers, menu
 import db
 from dotenv import load_dotenv
 
@@ -79,6 +77,7 @@ async def main() -> None:
     # Initialize Bot instance with default bot properties which will be passed to all API calls
     bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp.include_router(admin_handlers.router)
+    dp.include_router(menu.router)
     # And the run events dispatching
     await dp.start_polling(bot)
 

@@ -20,6 +20,9 @@ class AddDonorsState(StatesGroup):
 class EventState(StatesGroup):
     waiting_for_event = State()
 
+class DocumentState(StatesGroup):
+    waiting_for_document = State()
+
 admin_ids = [5235789211, 1194604421]
 
 

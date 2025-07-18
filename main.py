@@ -78,7 +78,7 @@ admin_kb= [
         [InlineKeyboardButton(text="Ответить на вопросы", callback_data='reply_to_questions')],
         [InlineKeyboardButton(text="Сделать рассылку", callback_data='newsletter'),
          InlineKeyboardButton(text="Создать мероприятие", callback_data='create_event')],
-        [InlineKeyboardButton(text="Загрузить статистику", callback_data='upload_statistics'),
+        [InlineKeyboardButton(text="Загрузить стaтистику", callback_data='upload_statistics'),
          InlineKeyboardButton(text="Получить статистику", callback_data='get_statistics')],
     ]
 

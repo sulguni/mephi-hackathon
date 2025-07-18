@@ -17,7 +17,10 @@ class EditDonor(StatesGroup):
 class AddDonorsState(StatesGroup):
     waiting_for_text = State()
 
-admin_ids = [5235789211]
+class EventState(StatesGroup):
+    waiting_for_event = State()
+
+admin_ids = [5235789211, 1194604421]
 
 
 class IsAdmin(BaseFilter):

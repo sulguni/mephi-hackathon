@@ -1,12 +1,16 @@
+import datetime
+
 import aiosqlite
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 import states
-
+import pandas as pd
+import io
 import db
+from datetime import datetime
 
 router = Router()
 
@@ -170,7 +174,8 @@ async def handle_text_list(message: Message, state: FSMContext):
 
 
 kb_return = [
-    [InlineKeyboardButton(text="Вернуться", callback_data='admin_menu')]]
+    [InlineKeyboardButton(text="Вернуться", callback_data='admin_menu')]
+]
 keyboard_return = InlineKeyboardMarkup(inline_keyboard=kb_return)
 
 
@@ -237,11 +242,250 @@ async def select_donor_field(message: Message, state: FSMContext):
     await state.clear()
 
 @router.callback_query(F.data == "upload_statistics")
-async def donor_edit(callback: CallbackQuery):
+async def donor_edit(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("Для загрузки статистики отправьте файл в формате exel",
                                      reply_markup=keyboard_return)
+    await state.set_state(states.DocumentState.waiting_for_document)
+
+
+@router.message(states.DocumentState.waiting_for_document, F.document)
+async def handle_excel_document(message: Message):
+    # Проверяем, что это Excel-файл
+    if not message.document.file_name.endswith(('.xlsx', '.xls', 'XLSX')):
+        await message.answer("Пожалуйста, загрузите файл в формате Excel (.xlsx или .xls)")
+        return
+
+    try:
+
+        file_bytes = await message.bot.download(message.document, destination=io.BytesIO())
+        file_bytes.seek(0)
+
+
+        try:
+            df = pd.read_excel(file_bytes)
+        except Exception as e:
+            await message.answer(f"Ошибка чтения Excel-файла: {str(e)}")
+            return
+
+        required_columns = ['ФИО', 'Дата акции', 'ЦК', 'Статус', 'Тип', 'Завершено']
+        if not all(col in df.columns for col in required_columns):
+            missing = set(required_columns) - set(df.columns)
+            await message.answer(f"В файле отсутствуют обязательные колонки: {', '.join(missing)}")
+            return
+
+
+        async with aiosqlite.connect(db.DATABASE_NAME) as conn:
+            total_added = 0
+            errors = []
+
+            for index, row in df.iterrows():
+                try:
+
+                    date_str = pd.to_datetime(row['Дата акции']).strftime('%Y-%m-%d')
+
+                    cursor = await conn.execute(
+                        "SELECT donorID FROM Donors WHERE Name = ?",
+                        (row['ФИО'],)
+                    )
+                    donor = await cursor.fetchone()
+                    if not donor:
+                        errors.append(f"Донор {row['ФИО']} не найден в базе")
+                        continue
+
+                    donor_id = donor[0]
+
+
+                    await conn.execute(
+                        """INSERT OR REPLACE INTO donors_data 
+                        (Date, donorID, donor_status, donor_type, complete)
+                        VALUES (?, ?, ?, ?, ?)""",
+                        (
+                            date_str,
+                            donor_id,
+                            int(row['Статус']),
+                            int(row['Тип']),
+                            int(row['Завершено'])
+                        )
+                    )
+                    total_added += 1
+
+                except Exception as e:
+                    errors.append(f"Ошибка в строке {index + 1}: {str(e)}")
+                    continue
+
+            await conn.commit()
+
+
+            report = f"✅ Успешно загружено: {total_added} записей"
+            if errors:
+                report += f"\n\nОшибки ({len(errors)}):\n" + "\n".join(errors[:5])  # Показываем первые 5 ошибок
+
+            await message.answer(report)
+
+    except Exception as e:
+        await message.answer(f"❌ Ошибка обработки файла: {str(e)}")
+
+kb_stat = [
+    [InlineKeyboardButton(text='Список мероприятий', callback_data='export_dd' )],
+    [InlineKeyboardButton(text='Список доноров', callback_data='export_donors' )],
+    [InlineKeyboardButton(text='Списки на мероприятие', callback_data='export_donors_date' )],
+    [InlineKeyboardButton(text='Вернуться', callback_data='admin_menu')],
+]
+keyboard_stat = InlineKeyboardMarkup(inline_keyboard=kb_stat)
+
 
 @router.callback_query(F.data == "get_statistics")
 async def donor_edit(callback: CallbackQuery):
-    await callback.message.edit_text("Вот ваш документ",
-                                     reply_markup=keyboard_return)
+    await callback.message.edit_text("Выберите желаемую информацию",
+                                     reply_markup=keyboard_stat)
+
+
+@router.callback_query(F.data == 'export_dd')
+async def export_dd_table(callback: CallbackQuery):
+    try:
+        async with aiosqlite.connect(db.DATABASE_NAME) as conn:
+            # Правильное выполнение запроса с aiosqlite
+            cursor = await conn.execute("SELECT * FROM DD")
+            rows = await cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+
+            # Создаем DataFrame
+            dd_df = pd.DataFrame(rows, columns=columns)
+
+            # Создаем Excel файл в памяти
+            excel_buffer = io.BytesIO()
+            with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                dd_df.to_excel(writer, index=False, sheet_name='Мероприятия')
+            excel_buffer.seek(0)
+
+            # Отправляем файл
+            await callback.message.answer_document(
+                BufferedInputFile(
+                    excel_buffer.getvalue(),
+                    filename="Мероприятия.xlsx"
+                ),
+                caption="Список мероприятий"
+            )
+
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка при экспорте мероприятий: {str(e)}")
+    finally:
+        await callback.answer()
+
+
+@router.callback_query(F.data == 'export_donors')
+async def export_donors_table(callback: CallbackQuery):
+    try:
+        async with aiosqlite.connect(db.DATABASE_NAME) as conn:
+            cursor = await conn.execute("SELECT * FROM Donors")
+            rows = await cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+
+            donors_df = pd.DataFrame(rows, columns=columns)
+
+            excel_buffer = io.BytesIO()
+            with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                donors_df.to_excel(writer, index=False, sheet_name='Доноры')
+            excel_buffer.seek(0)
+
+            await callback.message.answer_document(
+                BufferedInputFile(
+                    excel_buffer.getvalue(),
+                    filename="Доноры.xlsx"
+                ),
+                caption="Список доноров"
+            )
+
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка при экспорте доноров: {str(e)}")
+    finally:
+        await callback.answer()
+
+
+@router.callback_query(F.data == 'export_donors_date')
+async def export_donors_by_date(callback: CallbackQuery):
+    try:
+        # Сначала получаем список доступных дат
+        async with aiosqlite.connect(db.DATABASE_NAME) as conn:
+            cursor = await conn.execute("SELECT DISTINCT Date FROM DD ORDER BY Date DESC")
+            dates = await cursor.fetchall()
+
+            if not dates:
+                await callback.message.answer("Нет доступных мероприятий")
+                return
+
+            # Создаем клавиатуру с датами
+            kb_dates = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=date[0], callback_data=f"export_date_{date[0]}")]
+                for date in dates
+            ])
+
+            await callback.message.edit_text(
+                "Выберите дату мероприятия:",
+                reply_markup=kb_dates
+            )
+
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка при получении дат: {str(e)}")
+    finally:
+        await callback.answer()
+
+
+@router.callback_query(F.data.startswith("export_date_"))
+async def export_for_selected_date(callback: CallbackQuery):
+    try:
+        selected_date = callback.data.split("_")[2]  # Получаем дату в формате dd-mm-yyyy
+
+        # Преобразуем дату в формат yyyy-mm-dd для сравнения
+        date_obj = datetime.strptime(selected_date, "%d-%m-%Y")
+        db_date_format = date_obj.strftime("%Y-%m-%d")  # Формат для БД
+
+        async with aiosqlite.connect(db.DATABASE_NAME) as conn:
+            # Получаем данные доноров для выбранной даты
+            query = """
+            SELECT d.* FROM Donors d
+            JOIN donors_data dd ON d.donorID = dd.donorID
+            WHERE dd.Date = ?
+            """
+            cursor = await conn.execute(query, (db_date_format,))
+            rows = await cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+
+            if not rows:
+                await callback.message.answer(f"Нет данных за {selected_date}")
+                return
+
+            # Создаем DataFrame
+            df = pd.DataFrame(rows, columns=columns)
+
+            # Добавляем информацию о мероприятии
+            event_cursor = await conn.execute(
+                "SELECT donor_center FROM DD WHERE Date = ?",
+                (selected_date,)  # Здесь используем исходный формат даты
+            )
+            event_info = await event_cursor.fetchone()
+            event_name = event_info[0] if event_info else "Неизвестное мероприятие"
+
+            excel_buffer = io.BytesIO()
+            with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Доноры')
+
+                # Добавляем информацию о мероприятии
+                worksheet = writer.sheets['Доноры']
+                worksheet.cell(row=1, column=len(columns) + 2,
+                               value=f"Мероприятие: {event_name} ({selected_date})")
+
+            excel_buffer.seek(0)
+
+            await callback.message.answer_document(
+                BufferedInputFile(
+                    excel_buffer.getvalue(),
+                    filename=f"Доноры_{selected_date}.xlsx"
+                ),
+                caption=f"Список доноров на {selected_date} ({event_name})"
+            )
+
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка при экспорте: {str(e)}")
+    finally:
+        await callback.answer()

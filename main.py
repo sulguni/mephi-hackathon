@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from re import L
 import sys
 from os import getenv
 
@@ -9,6 +10,8 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
+import db
+
 # Bot token can be obtained via https://t.me/BotFather
 TOKEN = getenv("BOT_TOKEN")
 
@@ -16,10 +19,14 @@ TOKEN = getenv("BOT_TOKEN")
 
 dp = Dispatcher()
 
-
 @dp.message(CommandStart())
 async def command_start_handler(message: Message) -> None:
-    pass
+    if await db.seen_user(message.from_user.id):
+        await message.reply("С возращением!")
+    else:
+        await db.mark_seen(message.from_user.id)
+        await message.answer("Приветики! Введите номер телефона.")
+
 
 
 @dp.message()

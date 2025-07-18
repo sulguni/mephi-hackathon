@@ -4,11 +4,11 @@ import re
 import sys
 from os import getenv
 
-from aiogram import Bot, Dispatcher, html, F
+from aiogram import Bot, Dispatcher, html
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Chat, InaccessibleMessage, Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 import states
 
@@ -17,8 +17,6 @@ import db
 # Bot token can be obtained via https://t.me/BotFather
 TOKEN = getenv("BOT_TOKEN")
 
-INLINE_BTN = lambda text, data: InlineKeyboardButton(text=text, callback_data=data)
-INLINE_KEYBOARD = lambda buttons: InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # All handlers should be attached to the Router (or Dispatcher)
 
@@ -37,39 +35,11 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
 
 @dp.message(states.UserState.phone)
 async def phone_number_msg(message: Message):
-    t = (message.text or "").strip()
+    t = message.text or ""
     if re.match(r"\+\d+", t):
-        user = await db.find_user_by_phone(t)
-        if user != None:
-            await handle_seen_user(message, user)
-        else:
-            await try_finding_user_by_name(message)
+        pass # чёто с ним делаем
     else:
         await message.answer("Введите корректный номер телефона (начинается с плюса и последовательности цифр)")
-
-async def handle_seen_user(message: Message, user: db.User):
-    await message.answer(f"Нашли пользователя с таким номером. Вы {user.name}?", reply_markup=INLINE_KEYBOARD([
-        [INLINE_BTN("Да", "confirm_name"), INLINE_BTN("Нет, редактировать ФИО", "edit_name")]
-    ]))
-
-@dp.callback_query(F.data == "confirm_name", F.message)
-async def handle_confirm_name(query: CallbackQuery):
-    await query.message.edit_reply_markup(reply_markup=None)
-    await send_agreement(query)
-
-@dp.callback_query(F.data == "edit_name", F.message)
-async def handle_edit_name(query: CallbackQuery, state: FSMContext):
-    await query.message.edit_text(text="Введите ваше ФИО")
-    await state.set_state(states.UserState.edit_name)
-
-
-
-async def send_agreement(chat: CallbackQuery):
-    chat.answer("Примите соглашение")
-
-async def try_finding_user_by_name(message: Message):
-
-    pass
 
 @dp.message(Command('admin'), states.IsAdmin())
 async def admin_command(message: Message) -> None:

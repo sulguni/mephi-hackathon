@@ -45,7 +45,7 @@ keyboard_edit_return = InlineKeyboardMarkup(inline_keyboard=kb_edit_return)
 async def donor_edit(callback: CallbackQuery):
 
     await callback.message.edit_text("Введите номер телефона пользователя, чьи данные вы хотите изменить",
-                                     reply_markup=keyboard_return)
+                                     reply_markup=keyboard_edit_return)
 
 @router.callback_query(F.data == 'edit_by_phone')
 async def start_edit_by_phone(callback: CallbackQuery, state: FSMContext):
@@ -58,6 +58,12 @@ async def select_donor_field(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="ФИО", callback_data="edit_Name")],
         [InlineKeyboardButton(text="Группа", callback_data="edit_GroupID")],
         [InlineKeyboardButton(text="Контакты", callback_data="edit_Contacts")],
+        [InlineKeyboardButton(text="баллы Гаврилова", callback_data="edit_Gavrilova")],
+        [InlineKeyboardButton(text="баллы FMBA", callback_data="edit_FMBA")],
+        [InlineKeyboardButton(text="Последняя дотация в центре Гаврилова", callback_data="edit_LastGavrilov")],
+        [InlineKeyboardButton(text="Последняя дотация в центре FMBA", callback_data="edit_LastFMBA")],
+        [InlineKeyboardButton(text="Контакты", callback_data="edit_Contacts")],
+        [InlineKeyboardButton(text="Внешний донор", callback_data="edit_Stranger")]
     ]
     get_edit_keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -104,11 +110,15 @@ async def save_changes(message: Message, state: FSMContext):
 @router.callback_query(F.data == 'add_user')
 async def start_add_donors(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
-        "Введите данные доноров (каждый с новой строки):\n"
-        "Формат:\n"
-        "ФИО,Группа,Телефон\n"
-        "Пример:\n"
-        "Иванов Иван Иванович,Сотрудник,+79161234567"
+        "Введите данные доноров (каждая запись с новой строки):\n"
+        "Формат: Фамилия,Имя,Отчество,Сотрудник/Группа студента,Телефон\n"
+        "Необязательные поля (через запятую):\n"
+        "баллы Гаврилова,баллы FMBA,Последняя дотация в центре Гаврилова,\n"
+        "Последняя дотация в центре FMBA,Контакты,Внешний донор(0 - нет/1 - да)\n\n"
+        "Пример минимальных данных:\n"
+        "Иванов,Иван,Иванович,Сотрудник,+79161234567\n\n"
+        "Пример полных данных:\n"
+        "Петров,Пётр,Петрович,Сотрудник,+79261234567,0,1,,2023-02-20,тел.123-456,0"
     )
     await state.set_state(states.AddDonorsState.waiting_for_text)
 
@@ -119,15 +129,32 @@ async def handle_text_list(message: Message, state: FSMContext):
     added = 0
 
     async with aiosqlite.connect(db.DATABASE_NAME) as con, con.cursor() as cur:
-        for line in lines:
+        for i, line in enumerate(lines, 1):
             try:
+                if not line.strip():
+                    continue
+
                 parts = [p.strip() for p in line.split(',')]
                 if len(parts) >= 3:
-                    print(parts)
+                    full_name = ' '.join(parts[:3])  # Объединяем фамилию, имя и отчество
+                    group_id = parts[3]
+                    phone = parts[4]
+
+                    # Обработка необязательных полей
+                    gavrilova = int(parts[5]) if len(parts) > 5 and parts[5] else 0
+                    fmba = int(parts[6]) if len(parts) > 6 and parts[6] else 0
+                    last_gavrilov = parts[7] if len(parts) > 7 else None
+                    last_fmba = parts[8] if len(parts) > 8 else None
+                    contacts = parts[9] if len(parts) > 9 else None
+                    stranger = int(parts[10]) if len(parts) > 10 and parts[10] else 0
+
                     await con.execute(
-                        """INSERT OR REPLACE INTO Donors(Name, GroupID, Phone) 
-                        VALUES (?, ?, ?)""",
-                        (parts[0], parts[1], parts[2])
+                        """INSERT OR REPLACE INTO Donors
+                        (Name, GroupID, Phone,
+                         Gavrilova, FMBA, LastGavrilov, LastFMBA, Contacts, Stranger)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (full_name, group_id, phone,
+                         gavrilova, fmba, last_gavrilov, last_fmba, contacts, stranger)
                     )
                     added += 1
             except Exception:

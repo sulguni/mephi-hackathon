@@ -248,7 +248,7 @@ async def about_me(callback: types.CallbackQuery):
             SELECT Name, GroupID, Gavrilova, FMBA, 
                    LastGavrilov, LastFMBA, Contacts, Phone 
             FROM Donors 
-            WHERE donorsID = ?
+            WHERE donorID = ?
         """, (user_id,))
 
         user_data = cursor.fetchone()
@@ -398,7 +398,7 @@ async def process_date_selection(callback: types.CallbackQuery):
         cursor = conn.cursor()
 
         # Проверка существования пользователя в базе Donors
-        cursor.execute("SELECT 1 FROM Donors WHERE donorsID = ?", (user_id,))
+        cursor.execute("SELECT 1 FROM Donors WHERE donorID = ?", (user_id,))
         if not cursor.fetchone():
             await callback.message.answer("Сначала пройдите регистрацию в боте!")
             return
@@ -414,7 +414,7 @@ async def process_date_selection(callback: types.CallbackQuery):
             return
 
         # Определяем статус донора
-        cursor.execute("SELECT GroupID FROM Donors WHERE donorsID = ?", (user_id,))
+        cursor.execute("SELECT GroupID FROM Donors WHERE donorID = ?", (user_id,))
         group_result = cursor.fetchone()
         donor_status = "Донор" if group_result and group_result[0] else "Сотрудник"
 

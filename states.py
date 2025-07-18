@@ -4,6 +4,8 @@ from aiogram.types import TelegramObject
 
 class UserState(StatesGroup):
     phone = State()
+    edit_name = State()
+
 
 admin_ids = [5235789211]
 

@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher, html
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 import states
 
@@ -16,6 +16,7 @@ import db
 
 # Bot token can be obtained via https://t.me/BotFather
 TOKEN = getenv("BOT_TOKEN")
+
 
 # All handlers should be attached to the Router (or Dispatcher)
 
@@ -38,7 +39,23 @@ async def admin_newsletter_step_2(message: Message):
 
 @dp.message(Command('admin'), states.IsAdmin())
 async def admin_command(message: Message) -> None:
-    await message.answer('Добро пожаловать в панель организатора!')
+
+    admin_kb= [
+        [InlineKeyboardButton(text="Редактировать данные доноров", callback_data='donor_edit')],
+        [InlineKeyboardButton(text="Изменить информацию в боте", callback_data='bot_edit')],
+        [InlineKeyboardButton(text="Просмотреть статистику", callback_data='view_statistics')],
+        [InlineKeyboardButton(text="Ответить на вопросы", callback_data='reply_to_questions')],
+        [InlineKeyboardButton(text="Сделать рассылку", callback_data='newsletter'),
+         InlineKeyboardButton(text="Создать мероприятие", callback_data='create_event')],
+        [InlineKeyboardButton(text="Загрузить статистику", callback_data='upload_statistics'),
+         InlineKeyboardButton(text="Получить статистику", callback_data='get_statistics')],
+    ]
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=admin_kb)
+
+    await message.answer('Добро пожаловать в панель организатора!\n'
+                         'Выберите желаемое действие:', reply_markup=keyboard)
+
 
 async def main() -> None:
     # Initialize Bot instance with default bot properties which will be passed to all API calls

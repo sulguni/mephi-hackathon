@@ -16,8 +16,7 @@ import states
 import db
 
 # Bot token can be obtained via https://t.me/BotFather
-#TOKEN = getenv("BOT_TOKEN")
-TOKEN = '7907628817:AAE0G3uaCK3iGDHh08-FZDbP7BXVmtJ1d1Q'
+TOKEN = getenv("BOT_TOKEN")
 INLINE_BTN = lambda text, data: InlineKeyboardButton(text=text, callback_data=data)
 INLINE_KEYBOARD = lambda buttons: InlineKeyboardMarkup(inline_keyboard=buttons)
 

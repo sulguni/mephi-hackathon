@@ -150,32 +150,44 @@ INFO_TEXTS = {
 • Восстановление: 3-7 дней
 """
 }
+buttons = [
+    [
+        types.InlineKeyboardButton(
+            text="Что нужно знать?",
+            callback_data="what_to_know"
+        ),
+        types.InlineKeyboardButton(
+            text="Зарегистрироваться на ДД",
+            callback_data="register_for_dd"
+        )
+    ],
+    [
+        types.InlineKeyboardButton(
+            text="Обо мне",
+            callback_data="about_me"
+        )
+    ]
+]
+
 
 @router.message(Command("menu"))
 async def cmd_start(message: types.Message):
-    buttons = [
-        [
-            types.InlineKeyboardButton(
-                text="Что нужно знать?",
-                callback_data="what_to_know"
-            ),
-            types.InlineKeyboardButton(
-                text="Зарегистрироваться на ДД",
-                callback_data="register_for_dd"
-            )
-        ],
-        [
-            types.InlineKeyboardButton(
-                text="Обо мне",
-                callback_data="about_me"
-            )
-        ]
-    ]
-
-
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
 
+
     await message.answer(
+        text="<b>Меню</b>",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+
+@router.callback_query(F.data == "menu")
+async def cmd_start(callback: types.CallbackQuery):
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+    await callback.message.edit_text(
         text="<b>Меню</b>",
         parse_mode="HTML",
         reply_markup=keyboard
@@ -192,7 +204,8 @@ async def what_to_know(callback: types.CallbackQuery):
         [types.InlineKeyboardButton(text="Временные противопоказания", callback_data="info_temp_contra")],
         [types.InlineKeyboardButton(text="Важность донорства КМ", callback_data="info_bmd_importance")],
         [types.InlineKeyboardButton(text="Вступление в регистр ДКМ", callback_data="info_bmd_reg")],
-        [types.InlineKeyboardButton(text="Процедура донации КМ", callback_data="info_bmd_procedure")]
+        [types.InlineKeyboardButton(text="Процедура донации КМ", callback_data="info_bmd_procedure")],
+        [types.InlineKeyboardButton(text="Назад", callback_data='menu')]
     ]
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -208,11 +221,13 @@ async def what_to_know(callback: types.CallbackQuery):
 async def info_handler(callback: types.CallbackQuery):
     key = callback.data.split("_", 1)[1]
     text = INFO_TEXTS.get(key)
-
+    buttons3 = [types.InlineKeyboardButton(text="Назад", callback_data='menu')]
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons3)
     if text:
-        await callback.message.answer(
+        await callback.message.edit_text(
             text=text,
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=keyboard
         )
     else:
         await callback.answer("Информация не найдена")
@@ -223,7 +238,8 @@ async def info_handler(callback: types.CallbackQuery):
 @router.callback_query(F.data == "about_me")
 async def about_me(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-
+    buttons1 = [[types.InlineKeyboardButton(text="Назад", callback_data='menu')]]
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons1)
     try:
         conn = sqlite3.connect('db.db')
         cursor = conn.cursor()
@@ -253,19 +269,35 @@ async def about_me(callback: types.CallbackQuery):
                 f"• Последняя сдача в ЦД Гаврилова: {last_gavrilov or 'нет данных'}\n"
                 f"• Последняя сдача в ЦД ФМБА: {last_fmba or 'нет данных'}"
             )
+
+            await callback.message.edit_text(
+                text="<b>Назад</b>",
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+
         else:
             message_text = "❌ Ваши данные не найдены в базе доноров."
-
+            await callback.message.edit_text(
+                text="<b>Назад</b>",
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
     except sqlite3.Error as e:
         message_text = f"⚠️ Произошла ошибка при получении данных: {e}"
-
+        await callback.message.edit_text(
+            text="<b>Назад</b>",
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
     finally:
         if 'conn' in locals():
             conn.close()
 
-    await callback.message.answer(
+    await callback.message.edit_text(
         text=message_text,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup = keyboard
     )
     await callback.answer()
 
@@ -290,6 +322,7 @@ def is_future_date(date_str):
 
 @router.callback_query(F.data == "register_for_dd")
 async def register_for_dd(callback: types.CallbackQuery):
+    buttons1 = [types.InlineKeyboardButton(text="Назад", callback_data="menu")]
     user_id = callback.from_user.id
     logger.info(f"Пользователь {user_id} начал регистрацию на ДД")
 
@@ -330,13 +363,13 @@ async def register_for_dd(callback: types.CallbackQuery):
 
         # Добавляем кнопку "Назад"
         buttons.append([types.InlineKeyboardButton(
-            text="← Назад",
-            callback_data="back_to_menu"
+            text="Назад",
+            callback_data="menu"
         )])
 
         keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
 
-        await callback.message.answer(
+        await callback.message.edit_text(
             text="Выберите дату для регистрации:",
             reply_markup=keyboard
         )

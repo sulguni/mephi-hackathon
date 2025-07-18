@@ -2,10 +2,20 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.filters import BaseFilter
 from aiogram.types import TelegramObject
 
+
+
 class UserState(StatesGroup):
     phone = State()
     edit_name = State()
 
+
+class EditDonor(StatesGroup):
+    waiting_phone = State()
+    waiting_field = State()
+    waiting_value = State()
+
+class AddDonorsState(StatesGroup):
+    waiting_for_text = State()
 
 admin_ids = [5235789211]
 

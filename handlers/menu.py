@@ -180,7 +180,6 @@ async def cmd_start(message: types.Message):
 
 @router.callback_query(F.data == "what_to_know")
 async def what_to_know(callback: types.CallbackQuery):
-    # Создаем кнопки для меню информации
     buttons = [
         [types.InlineKeyboardButton(text="Требования к донорам", callback_data="info_requirements")],
         [types.InlineKeyboardButton(text="Подготовка к донации", callback_data="info_preparation")],
@@ -193,7 +192,6 @@ async def what_to_know(callback: types.CallbackQuery):
     ]
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
 
-    # Редактируем текущее сообщение
     await callback.message.edit_text(
         text="<b>Выберите, что вы хотите знать:</b>",
         parse_mode="HTML",
@@ -202,10 +200,8 @@ async def what_to_know(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# Хэндлер для информационных кнопок
 @router.callback_query(F.data.startswith("info_"))
 async def info_handler(callback: types.CallbackQuery):
-    # Извлекаем ключ из callback_data (убираем префикс "info_")
     key = callback.data.split("_", 1)[1]
     text = INFO_TEXTS.get(key)
 
@@ -222,30 +218,25 @@ async def info_handler(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "about_me")
 async def about_me(callback: types.CallbackQuery):
-    # Получаем user_id пользователя
     user_id = callback.from_user.id
 
     try:
-        # Подключаемся к базе данных
         conn = sqlite3.connect('db.db')
         cursor = conn.cursor()
 
-        # Выполняем запрос к базе данных
         cursor.execute("""
             SELECT Name, GroupID, Gavrilova, FMBA, 
                    LastGavrilov, LastFMBA, Contacts, Phone 
             FROM Donors 
-            WHERE UserID = ?
+            WHERE donorsID = ?
         """, (user_id,))
 
         user_data = cursor.fetchone()
 
         if user_data:
-            # Распаковываем данные
             (name, group, gavrilova, fmba,
              last_gavrilov, last_fmba, contacts, phone) = user_data
 
-            # Форматируем текст сообщения
             message_text = (
                 f"<b>Ваши данные:</b>\n\n"
                 f"<b>Имя:</b> {name or 'не указано'}\n"
@@ -265,11 +256,9 @@ async def about_me(callback: types.CallbackQuery):
         message_text = f"⚠️ Произошла ошибка при получении данных: {e}"
 
     finally:
-        # Закрываем соединение с базой данных
         if 'conn' in locals():
             conn.close()
 
-    # Отправляем сообщение пользователю
     await callback.message.answer(
         text=message_text,
         parse_mode="HTML"

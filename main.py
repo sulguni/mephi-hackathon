@@ -28,7 +28,7 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
     else:
         await db.mark_seen(message.from_user.id)
 
-        await message.answer('Привет, для начала тебе нужно зарегестрироваться.\n'
+        await message.answer('Привет, я бот для помоши участнинкам и организаторам донорских дней в МИФИ. Для начала тебе нужно зарегестрироваться.\n'
                          ' Пожалуйста, введи свой номер телефона')
         await state.set_state(states.UserState.phone)
 

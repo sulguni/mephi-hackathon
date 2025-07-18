@@ -7,7 +7,7 @@ from os import getenv
 from aiogram import Bot, Dispatcher, html
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 import states
@@ -28,13 +28,17 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
     else:
         await db.mark_seen(message.from_user.id)
 
-        await message.answer('Привет, для начала тебе нужно зарегестрироваться.\n'
+        await message.answer('Привет, я бот для помощи участникам и организаторам донорских дней в МИФИ. Для начала тебе нужно зарегестрироваться.\n'
                          ' Пожалуйста, введи свой номер телефона')
         await state.set_state(states.UserState.phone)
 
 @dp.message(states.UserState.phone)
 async def admin_newsletter_step_2(message: Message):
     print(message.text)
+
+@dp.message(Command('admin'), states.IsAdmin())
+async def admin_command(message: Message) -> None:
+    await message.answer('Добро пожаловать в панель организатора!')
 
 async def main() -> None:
     # Initialize Bot instance with default bot properties which will be passed to all API calls

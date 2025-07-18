@@ -1,10 +1,11 @@
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.filters import BaseFilter
+from aiogram.types import TelegramObject
 
 class UserState(StatesGroup):
     phone = State()
 
-admin_ids = [5630011467]
+admin_ids = [5235789211]
 
 
 class IsAdmin(BaseFilter):

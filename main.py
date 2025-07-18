@@ -4,7 +4,7 @@ import re
 import sys
 from os import getenv
 import aiosqlite
-
+from aiogram import Router
 from aiogram import Bot, Dispatcher, html, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -20,7 +20,7 @@ TOKEN = getenv("BOT_TOKEN")
 INLINE_BTN = lambda text, data: InlineKeyboardButton(text=text, callback_data=data)
 INLINE_KEYBOARD = lambda buttons: InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# All handlers should be attached to the Router (or Dispatcher)
+
 
 dp = Dispatcher()
 

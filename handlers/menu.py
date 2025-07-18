@@ -1,6 +1,6 @@
 from aiogram import Router, types, F
 from aiogram.filters import Command
-
+import sqlite3
 router = Router()
 
 INFO_TEXTS = {
@@ -217,4 +217,61 @@ async def info_handler(callback: types.CallbackQuery):
     else:
         await callback.answer("Информация не найдена")
 
+    await callback.answer()
+
+
+@router.callback_query(F.data == "about_me")
+async def about_me(callback: types.CallbackQuery):
+    # Получаем user_id пользователя
+    user_id = callback.from_user.id
+
+    try:
+        # Подключаемся к базе данных
+        conn = sqlite3.connect('db.db')
+        cursor = conn.cursor()
+
+        # Выполняем запрос к базе данных
+        cursor.execute("""
+            SELECT Name, GroupID, Gavrilova, FMBA, 
+                   LastGavrilov, LastFMBA, Contacts, Phone 
+            FROM Donors 
+            WHERE UserID = ?
+        """, (user_id,))
+
+        user_data = cursor.fetchone()
+
+        if user_data:
+            # Распаковываем данные
+            (name, group, gavrilova, fmba,
+             last_gavrilov, last_fmba, contacts, phone) = user_data
+
+            # Форматируем текст сообщения
+            message_text = (
+                f"<b>Ваши данные:</b>\n\n"
+                f"<b>Имя:</b> {name or 'не указано'}\n"
+                f"<b>Группа:</b> {group or 'не указана'}\n"
+                f"<b>Контактные данные:</b> {contacts or 'не указаны'}\n"
+                f"<b>Телефон:</b> {phone or 'не указан'}\n\n"
+                f"<b>Статистика донаций:</b>\n"
+                f"• В ЦД Гаврилова: {'да' if gavrilova else 'нет'}\n"
+                f"• В ЦД ФМБА: {'да' if fmba else 'нет'}\n"
+                f"• Последняя сдача в ЦД Гаврилова: {last_gavrilov or 'нет данных'}\n"
+                f"• Последняя сдача в ЦД ФМБА: {last_fmba or 'нет данных'}"
+            )
+        else:
+            message_text = "❌ Ваши данные не найдены в базе доноров."
+
+    except sqlite3.Error as e:
+        message_text = f"⚠️ Произошла ошибка при получении данных: {e}"
+
+    finally:
+        # Закрываем соединение с базой данных
+        if 'conn' in locals():
+            conn.close()
+
+    # Отправляем сообщение пользователю
+    await callback.message.answer(
+        text=message_text,
+        parse_mode="HTML"
+    )
     await callback.answer()

@@ -34,8 +34,12 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
         await state.set_state(states.UserState.phone)
 
 @dp.message(states.UserState.phone)
-async def admin_newsletter_step_2(message: Message):
-    print(message.text)
+async def phone_number_msg(message: Message):
+    t = message.text or ""
+    if re.match(r"\+\d+", t):
+        pass # чёто с ним делаем
+    else:
+        await message.answer("Введите корректный номер телефона (начинается с плюса и последовательности цифр)")
 
 @dp.message(Command('admin'), states.IsAdmin())
 async def admin_command(message: Message) -> None:

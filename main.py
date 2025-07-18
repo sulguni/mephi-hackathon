@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from re import L
 import sys
 from os import getenv
 
@@ -11,6 +12,8 @@ from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 import states
 
+import db
+
 # Bot token can be obtained via https://t.me/BotFather
 TOKEN = getenv("BOT_TOKEN")
 
@@ -18,13 +21,16 @@ TOKEN = getenv("BOT_TOKEN")
 
 dp = Dispatcher()
 
-
 @dp.message(CommandStart())
-async def echo_handler(message: Message, state: FSMContext) -> None:
+async def command_start_handler(message: Message, state: FSMContext) -> None:
+    if await db.seen_user(message.from_user.id):
+        await message.reply("С возращением!")
+    else:
+        await db.mark_seen(message.from_user.id)
 
-    await message.answer('Привет, для начала тебе нужно зарегестрироваться.\n'
+        await message.answer('Привет, для начала тебе нужно зарегестрироваться.\n'
                          ' Пожалуйста, введи свой номер телефона')
-    await state.set_state(states.UserState.phone)
+        await state.set_state(states.UserState.phone)
 
 @dp.message(states.UserState.phone)
 async def admin_newsletter_step_2(message: Message):

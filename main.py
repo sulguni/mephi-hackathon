@@ -15,7 +15,7 @@ import states
 from handlers import admin_handlers
 import db
 from dotenv import load_dotenv
-
+import menu
 load_dotenv()
 # Bot token can be obtained via https://t.me/BotFather
 TOKEN = getenv("BOT_TOKEN")
@@ -79,6 +79,7 @@ async def main() -> None:
     # Initialize Bot instance with default bot properties which will be passed to all API calls
     bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp.include_router(admin_handlers.router)
+    dp.include_router(menu.router)
     # And the run events dispatching
     await dp.start_polling(bot)
 

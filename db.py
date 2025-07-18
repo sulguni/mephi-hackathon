@@ -16,7 +16,7 @@ async def mark_seen(id: int):
     async with aiosqlite.connect(DATABASE_NAME) as con, con.cursor() as cur:
         await cur.execute("INSERT INTO BotUsers (UserID) values (?)", (id,))
 
-async def find_user_by_phone(phone: str) -> User | None:
+async def find_user_by_phone(phone: str):
     async with aiosqlite.connect(DATABASE_NAME) as con, con.cursor() as cur:
         cur = await cur.execute("SELECT Name, GroupID, Gavrilova, FMBA, LastGavrilov, LastFMBA, Contacts, Phone, Stranger from Donors where Phone = ?", (phone,))
         row = await cur.fetchone()
@@ -24,7 +24,7 @@ async def find_user_by_phone(phone: str) -> User | None:
             return None
         return User._make(row)
 
-async def find_user_by_names(name: str) -> User | None:
+async def find_user_by_names(name: str):
     async with aiosqlite.connect(DATABASE_NAME) as con, con.cursor() as cur:
         cur = await cur.execute("SELECT Name, GroupID, Gavrilova, FMBA, LastGavrilov, LastFMBA, Contacts, Phone, Stranger from Donors where Name = ?", (name))
         row = await cur.fetchone()

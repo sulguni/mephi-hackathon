@@ -114,11 +114,12 @@ async def start_add_donors(callback: CallbackQuery, state: FSMContext):
         "Формат: Фамилия,Имя,Отчество,Сотрудник/Группа студента,Телефон\n"
         "Необязательные поля (через запятую):\n"
         "баллы Гаврилова,баллы FMBA,Последняя дотация в центре Гаврилова,\n"
-        "Последняя дотация в центре FMBA,Контакты,Внешний донор(0 - нет/1 - да)\n\n"
+        "Последняя дотация в центре FMBA,Контакты,Внешний донор(0 - нет/1 - да)\n"
+        "Тг айди\n\n"
         "Пример минимальных данных:\n"
         "Иванов,Иван,Иванович,Сотрудник,+79161234567\n\n"
         "Пример полных данных:\n"
-        "Петров,Пётр,Петрович,Сотрудник,+79261234567,0,1,,2023-02-20,тел.123-456,0"
+        "Петров,Пётр,Петрович,Сотрудник,+79261234567,0,1,,2023-02-20,тел.123-456,0,1194604421"
     )
     await state.set_state(states.AddDonorsState.waiting_for_text)
 
@@ -135,6 +136,7 @@ async def handle_text_list(message: Message, state: FSMContext):
                     continue
 
                 parts = [p.strip() for p in line.split(',')]
+                print(parts)
                 if len(parts) >= 3:
                     full_name = ' '.join(parts[:3])  # Объединяем фамилию, имя и отчество
                     group_id = parts[3]
@@ -147,14 +149,15 @@ async def handle_text_list(message: Message, state: FSMContext):
                     last_fmba = parts[8] if len(parts) > 8 else None
                     contacts = parts[9] if len(parts) > 9 else None
                     stranger = int(parts[10]) if len(parts) > 10 and parts[10] else 0
+                    donorsID = int(parts[11]) if len(parts) > 11 and parts[11] else 0
 
                     await con.execute(
                         """INSERT OR REPLACE INTO Donors
                         (Name, GroupID, Phone,
-                         Gavrilova, FMBA, LastGavrilov, LastFMBA, Contacts, Stranger)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                         Gavrilova, FMBA, LastGavrilov, LastFMBA, Contacts, Stranger, donorsID)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (full_name, group_id, phone,
-                         gavrilova, fmba, last_gavrilov, last_fmba, contacts, stranger)
+                         gavrilova, fmba, last_gavrilov, last_fmba, contacts, stranger, donorsID)
                     )
                     added += 1
             except Exception:
@@ -193,10 +196,17 @@ async def donor_edit(callback: CallbackQuery):
                                      reply_markup=keyboard_return)
 
 @router.callback_query(F.data == "create_event")
-async def donor_edit(callback: CallbackQuery):
-    await callback.message.edit_text("Для создания мероприятия введите дату и "
-                                     "центр крови",
+async def create_event(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("Для создания мероприятия введите дату (dd-mm-yyyy) и "
+                                     "центр крови через запятую.\n"
+                                     "Пример:\n"
+                                     "24-03-2024,Гаврилова",
                                      reply_markup=keyboard_return)
+    await state.set_state(states.EventState.waiting_for_event)
+
+@router.message(states.EventState.waiting_for_event)
+async def select_donor_field(message: Message, state: FSMContext):
+    pass
 
 @router.callback_query(F.data == "upload_statistics")
 async def donor_edit(callback: CallbackQuery):

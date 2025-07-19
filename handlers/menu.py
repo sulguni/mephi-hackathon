@@ -157,7 +157,7 @@ buttons = [
             callback_data="what_to_know"
         ),
         types.InlineKeyboardButton(
-            text="Зарегистрироваться на ДД",
+            text="Регистрация на ДД",
             callback_data="register_for_dd"
         )
     ],
@@ -188,7 +188,7 @@ async def cmd_start(message: types.Message):
 
 
     await message.answer(
-        text="<b>Меню</b>",
+        text="<b>Здравствуйте!\nДобро пожаловать в меню.\nЧто вам интересно?</b>",
         parse_mode="HTML",
         reply_markup=keyboard
     )
@@ -200,7 +200,7 @@ async def cmd_start(callback: types.CallbackQuery):
 
 
     await callback.message.edit_text(
-        text="<b>Меню</b>",
+        text="<b>Здравствуйте!\nДобро пожаловать в меню.\nЧто вам интересно?</b>",
         parse_mode="HTML",
         reply_markup=keyboard
     )

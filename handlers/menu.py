@@ -233,7 +233,7 @@ async def what_to_know(callback: types.CallbackQuery):
 async def info_handler(callback: types.CallbackQuery):
     key = callback.data.split("_", 1)[1]
     text = INFO_TEXTS.get(key)
-    buttons3 = [types.InlineKeyboardButton(text="Назад", callback_data='menu')]
+    buttons3 = [[types.InlineKeyboardButton(text="Назад", callback_data='menu')]]
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons3)
     if text:
         await callback.message.edit_text(

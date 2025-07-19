@@ -46,88 +46,441 @@ async def back_to_admin(callback: CallbackQuery):
     await callback.message.edit_text('Добро пожаловать в панель организатора!\n'
                          'Выберите желаемое действие:', reply_markup=keyboard)
 
-kb_edit_return = [
-    [InlineKeyboardButton(text="Редактировать пользователя", callback_data='edit_by_phone')],
-    [InlineKeyboardButton(text="Добавить пользователей", callback_data='add_user')],
-    [InlineKeyboardButton(text="Вернуться", callback_data='admin_menu')]
-]
-keyboard_edit_return = InlineKeyboardMarkup(inline_keyboard=kb_edit_return)
 
 
 
 """
 Меню выбора редактирования пользователя добавить/изменить
 """
+kb_edit_return = [
+    [InlineKeyboardButton(text="Редактировать по телефону", callback_data='edit_by_phone')],
+    [InlineKeyboardButton(text="Редактировать по ФИО", callback_data='edit_by_name')],
+    [InlineKeyboardButton(text="Удалить по телефону", callback_data='delete_by_phone')],
+    [InlineKeyboardButton(text="Добавить пользователя", callback_data='add_user')],
+    [InlineKeyboardButton(text="Импорт из Excel", callback_data='import_from_excel')],
+    [InlineKeyboardButton(text="Вернуться", callback_data='admin_menu')]
+]
+keyboard_edit_return = InlineKeyboardMarkup(inline_keyboard=kb_edit_return)
+
+
+# Состояния для FSM
+class EditStates(StatesGroup):
+    waiting_phone = State()
+    waiting_name = State()
+    waiting_delete_phone = State()
+    waiting_excel = State()
+    editing_field = State()
+
+
+"""
+Меню выбора редактирования пользователя
+"""
+
+
 @router.callback_query(F.data == "donor_edit")
 async def donor_edit(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "Выберите действие с пользователями:",
+        reply_markup=keyboard_edit_return
+    )
 
-    await callback.message.edit_text("Выберите, что хотите изменить",
-                                     reply_markup=keyboard_edit_return)
 
 """
-Ввод номера телефона по форме +70000000000 для изменения данных пользователя
+Редактирование по телефону
 """
-@router.callback_query(F.data == 'edit_by_phone')
-async def start_edit_by_phone(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("Введите номер телефона пользователя, чьи данные вы хотите изменить.\n"
-                                     "Формат: +70000000000:")
-    await state.set_state(states.EditDonor.waiting_phone)
-
-"""
-Выбор изменяемого параметра и его замена
-"""
-@router.message(states.EditDonor.waiting_phone, F.text.regexp(r'^\+?\d{11}$'))
-async def select_donor_field(message: Message, state: FSMContext):
-    buttons = [
-        [InlineKeyboardButton(text="ФИО", callback_data="edit_Name")],
-        [InlineKeyboardButton(text="Группа", callback_data="edit_GroupID")],
-        [InlineKeyboardButton(text="Контакты", callback_data="edit_Contacts")],
-        [InlineKeyboardButton(text="баллы Гаврилова", callback_data="edit_Gavrilova")],
-        [InlineKeyboardButton(text="баллы FMBA", callback_data="edit_FMBA")],
-        [InlineKeyboardButton(text="Последняя дотация в центре Гаврилова", callback_data="edit_LastGavrilov")],
-        [InlineKeyboardButton(text="Последняя дотация в центре FMBA", callback_data="edit_LastFMBA")],
-        [InlineKeyboardButton(text="Контакты", callback_data="edit_Contacts")],
-        [InlineKeyboardButton(text="Внешний донор", callback_data="edit_Stranger")]
-    ]
-    get_edit_keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-    await state.update_data(phone=message.text.strip())
-    await message.answer("Выберите поле для редактирования:", reply_markup=get_edit_keyboard)
-    await state.set_state(states.EditDonor.waiting_field)
-
-@router.callback_query(states.EditDonor.waiting_field, F.data.startswith("edit_"))
-async def select_field(callback: CallbackQuery, state: FSMContext):
-    field = callback.data.split("_")[1]
-    await state.update_data(field=field)
-    await callback.message.answer(f"Введите новое значение для {field}:")
-    await state.set_state(states.EditDonor.waiting_value)
+@router.callback_query(F.data == "edit_by_phone")
+async def edit_by_phone_start(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer("Введите номер телефона пользователя для редактирования:")
+    await state.set_state(EditStates.waiting_phone)
     await callback.answer()
 
-@router.message(states.EditDonor.waiting_value)
-async def save_changes(message: Message, state: FSMContext):
+
+@router.message(EditStates.waiting_phone)
+async def edit_by_phone_process(message: Message, state: FSMContext):
+    phone = message.text
+    try:
+        async with aiosqlite.connect(db.DATABASE_NAME) as con:
+            cursor = await con.execute(
+                "SELECT * FROM Donors WHERE Phone = ?",
+                (phone,)
+            )
+            donor = await cursor.fetchone()
+
+            if donor:
+                await state.update_data(donor_id=donor[0])
+                await show_donor_info(message, donor)
+                await message.answer(
+                    "Какое поле хотите изменить?",
+                    reply_markup=create_full_edit_keyboard(donor[0])
+                )
+            else:
+                await message.answer("Пользователь с таким телефоном не найден.")
+
+    except Exception as e:
+        await message.answer(f"Ошибка: {str(e)}")
+    finally:
+        await state.set_state(EditStates.editing_field)
+
+
+"""
+Редактирование по ФИО
+"""
+
+
+@router.callback_query(F.data == "edit_by_name")
+async def edit_by_name_start(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer("Введите ФИО пользователя для поиска:")
+    await state.set_state(EditStates.waiting_name)
+    await callback.answer()
+
+
+@router.message(EditStates.waiting_name)
+async def edit_by_name_process(message: Message, state: FSMContext):
+    name = message.text
+    try:
+        async with aiosqlite.connect(db.DATABASE_NAME) as con:
+            cursor = await con.execute(
+                "SELECT * FROM Donors WHERE Name LIKE ?",
+                (f"%{name}%",)
+            )
+            donors = await cursor.fetchall()
+
+            if donors:
+                if len(donors) > 1:
+                    kb = []
+                    for donor in donors:
+                        kb.append([InlineKeyboardButton(
+                            text=f"{donor[1]} ({donor[8]})",
+                            callback_data=f"select_donor_{donor[0]}"
+                        )])
+
+                    await message.answer(
+                        "Найдено несколько пользователей. Выберите нужного:",
+                        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+                    )
+                else:
+                    donor = donors[0]
+                    await state.update_data(donor_id=donor[0])
+                    await show_donor_info(message, donor)
+                    await message.answer(
+                        "Какое поле хотите изменить?",
+                        reply_markup=create_full_edit_keyboard(donor[0])
+                    )
+                    await state.set_state(EditStates.editing_field)
+            else:
+                await message.answer("Пользователи с таким ФИО не найдены.")
+
+    except Exception as e:
+        await message.answer(f"Ошибка: {str(e)}")
+
+
+"""
+Обработчик выбора пользователя из списка
+"""
+
+
+@router.callback_query(F.data.startswith("select_donor_"))
+async def select_donor(callback: CallbackQuery, state: FSMContext):
+    donor_id = int(callback.data.split("_")[2])
+    try:
+        async with aiosqlite.connect(db.DATABASE_NAME) as con:
+            cursor = await con.execute(
+                "SELECT * FROM Donors WHERE donorID = ?",
+                (donor_id,)
+            )
+            donor = await cursor.fetchone()
+
+            if donor:
+                await state.update_data(donor_id=donor[0])
+                await show_donor_info(callback.message, donor)
+                await callback.message.answer(
+                    "Какое поле хотите изменить?",
+                    reply_markup=create_full_edit_keyboard(donor[0])
+                )
+                await state.set_state(EditStates.editing_field)
+            else:
+                await callback.message.answer("Пользователь не найден.")
+
+    except Exception as e:
+        await callback.message.answer(f"Ошибка: {str(e)}")
+    finally:
+        await callback.answer()
+
+
+"""
+Функция для отображения информации о доноре
+"""
+
+
+async def show_donor_info(message: Message, donor):
+    await message.answer(
+        f"🔹 <b>Информация о пользователе:</b>\n\n"
+        f"<b>ID:</b> {donor[0]}\n"
+        f"<b>ФИО:</b> {donor[1]}\n"
+        f"<b>Группа:</b> {donor[2]}\n"
+        f"<b>Гаврилова:</b> {'Да' if donor[3] else 'Нет'}\n"
+        f"<b>ФМБА:</b> {'Да' if donor[4] else 'Нет'}\n"
+        f"<b>Последняя Гаврилова:</b> {donor[5]}\n"
+        f"<b>Последняя ФМБА:</b> {donor[6]}\n"
+        f"<b>Контакты:</b> {donor[7]}\n"
+        f"<b>Телефон:</b> {donor[8]}\n"
+        f"<b>Чужой:</b> {'Да' if donor[9] else 'Нет'}"
+    )
+
+
+"""
+Функция для создания полной клавиатуры редактирования
+"""
+
+
+def create_full_edit_keyboard(donor_id):
+    buttons = [
+        [InlineKeyboardButton(text="ФИО", callback_data=f"edit_field_name_{donor_id}")],
+        [InlineKeyboardButton(text="Группа", callback_data=f"edit_field_group_{donor_id}")],
+        [InlineKeyboardButton(text="Гаврилова", callback_data=f"edit_field_gavrilova_{donor_id}")],
+        [InlineKeyboardButton(text="ФМБА", callback_data=f"edit_field_fmba_{donor_id}")],
+        [InlineKeyboardButton(text="Последняя Гаврилова", callback_data=f"edit_field_lastgav_{donor_id}")],
+        [InlineKeyboardButton(text="Последняя ФМБА", callback_data=f"edit_field_lastfmba_{donor_id}")],
+        [InlineKeyboardButton(text="Контакты", callback_data=f"edit_field_contacts_{donor_id}")],
+        [InlineKeyboardButton(text="Телефон", callback_data=f"edit_field_phone_{donor_id}")],
+        [InlineKeyboardButton(text="Чужой", callback_data=f"edit_field_stranger_{donor_id}")],
+        [InlineKeyboardButton(text="Отмена", callback_data="donor_edit")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+"""
+Обработчики редактирования полей
+"""
+
+
+@router.callback_query(F.data.startswith("edit_field_"))
+async def edit_field_start(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split("_")
+    field_name = parts[2]
+    donor_id = int(parts[3])
+
+    await state.update_data(editing_field=field_name, donor_id=donor_id)
+
+    field_descriptions = {
+        "name": "Введите новое ФИО:",
+        "group": "Введите новую группу:",
+        "gavrilova": "Изменить статус Гаврилова (1 - да, 0 - нет):",
+        "fmba": "Изменить статус ФМБА (1 - да, 0 - нет):",
+        "lastgav": "Введите дату последней Гаврилова:",
+        "lastfmba": "Введите дату последней ФМБА:",
+        "contacts": "Введите новые контакты:",
+        "phone": "Введите новый телефон:",
+        "stranger": "Изменить статус Чужой (1 - да, 0 - нет):"
+    }
+
+    await callback.message.answer(field_descriptions[field_name])
+    await state.set_state(EditStates.editing_field)
+    await callback.answer()
+
+
+@router.message(EditStates.editing_field)
+async def edit_field_process(message: Message, state: FSMContext):
     data = await state.get_data()
+    field_name = data['editing_field']
+    donor_id = data['donor_id']
+    new_value = message.text
 
     try:
-        async with aiosqlite.connect(db.DATABASE_NAME) as conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    f"UPDATE Donors SET {data['field']} = ? WHERE Phone = ?",
-                    (message.text, data['phone'])
+        # Для числовых полей преобразуем значение
+        if field_name in ['gavrilova', 'fmba', 'stranger']:
+            new_value = 1 if new_value.lower() in ['1', 'да', 'yes', 'true'] else 0
+
+        async with aiosqlite.connect(db.DATABASE_NAME) as con:
+            # Динамическое формирование SQL запроса
+            await con.execute(
+                f"UPDATE Donors SET {field_name.capitalize()} = ? WHERE donorID = ?",
+                (new_value, donor_id)
+            )
+            await con.commit()
+
+            # Получаем обновленные данные
+            cursor = await con.execute(
+                "SELECT * FROM Donors WHERE donorID = ?",
+                (donor_id,)
+            )
+            donor = await cursor.fetchone()
+
+            await message.answer("✅ Поле успешно обновлено!")
+            await show_donor_info(message, donor)
+            await message.answer(
+                "Хотите изменить ещё что-то?",
+                reply_markup=create_full_edit_keyboard(donor_id)
+            )
+
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при обновлении: {str(e)}")
+
+    await state.update_data(editing_field=None)
+
+
+"""
+Удаление по телефону
+"""
+
+
+@router.callback_query(F.data == "delete_by_phone")
+async def delete_by_phone_start(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer("Введите номер телефона пользователя для удаления:")
+    await state.set_state(EditStates.waiting_delete_phone)
+    await callback.answer()
+
+
+@router.message(EditStates.waiting_delete_phone)
+async def delete_by_phone_process(message: Message, state: FSMContext):
+    phone = message.text
+    try:
+        async with aiosqlite.connect(db.DATABASE_NAME) as con:
+            cursor = await con.execute(
+                "SELECT Name FROM Donors WHERE Phone = ?",
+                (phone,)
+            )
+            donor = await cursor.fetchone()
+
+            if donor:
+                await con.execute(
+                    "DELETE FROM Donors WHERE Phone = ?",
+                    (phone,)
                 )
+                await con.commit()
+                await message.answer(f"Пользователь {donor[0]} удалён.")
+            else:
+                await message.answer("Пользователь с таким телефоном не найден.")
 
-                await conn.commit()
-
-
-                if cursor.rowcount > 0:
-                    await message.answer("✅ Данные успешно обновлены!")
-                else:
-                    await message.answer("⚠️ Донор с таким номером не найден или данные не изменились")
-
-    except aiosqlite.Error as e:
-        await message.answer(f"❌ Ошибка базы данных: {e}")
+    except Exception as e:
+        await message.answer(f"Ошибка при удалении: {str(e)}")
     finally:
         await state.clear()
+
+
+"""
+Импорт из Excel
+"""
+
+
+@router.callback_query(F.data == "import_from_excel")
+async def import_from_excel_start(callback: CallbackQuery, state: FSMContext):
+    await callback.message.answer(
+        "Пожалуйста, отправьте Excel файл с данными пользователей.\n"
+        "Формат файла должен соответствовать полям таблицы Donors."
+    )
+    await state.set_state(EditStates.waiting_excel)
+    await callback.answer()
+
+
+@router.message(EditStates.waiting_excel, F.document)
+async def import_from_excel_process(message: Message, state: FSMContext):
+    try:
+        file = await message.bot.get_file(message.document.file_id)
+        file_path = await message.bot.download_file(file.file_path)
+
+        # Читаем Excel с указанием типов данных
+        df = pd.read_excel(file_path, dtype={
+            'Phone': str,
+            'LastGavrilov': str,
+            'LastFMBA': str,
+            'GroupID': str
+        })
+
+        # Обработка телефонов
+        df['Phone'] = df['Phone'].apply(clean_phone_number)
+
+        # Обработка GroupID - первая буква заглавная, остальные строчные
+        df['GroupID'] = df['GroupID'].str.strip().str.capitalize()
+
+        # Обработка дат
+        date_columns = ['LastGavrilov', 'LastFMBA']
+        for col in date_columns:
+            if col in df.columns:
+                df[col] = df[col].apply(format_date)
+
+        required_columns = ['Name', 'Phone']
+        if not all(col in df.columns for col in required_columns):
+            raise ValueError("Файл должен содержать колонки 'Name' и 'Phone'")
+
+        async with aiosqlite.connect(db.DATABASE_NAME) as con:
+            for _, row in df.iterrows():
+                await con.execute(
+                    """INSERT OR REPLACE INTO Donors 
+                    (Name, GroupID, Gavrilova, FMBA, LastGavrilov, LastFMBA, Contacts, Phone, Stranger) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        row.get('Name'),
+                        row.get('GroupID', ''),
+                        int(row.get('Gavrilova', 0)),
+                        int(row.get('FMBA', 0)),
+                        row.get('LastGavrilov', ''),
+                        row.get('LastFMBA', ''),
+                        row.get('Contacts', ''),
+                        row['Phone'],
+                        int(row.get('Stranger', 0))
+                    )
+                )
+            await con.commit()
+
+        await message.answer(f"✅ Успешно импортировано {len(df)} пользователей.\n")
+
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при импорте: {str(e)}")
+    finally:
+        await state.clear()
+
+
+# Вспомогательные функции
+def clean_phone_number(phone):
+    """Приводит номер телефона к формату +79858920529"""
+    if pd.isna(phone):
+        return ''
+
+    phone = str(phone)
+    # Удаляем все нецифровые символы
+    digits = ''.join(filter(str.isdigit, phone))
+
+    # Добавляем +7 для российских номеров
+    if digits.startswith('7') and len(digits) == 11:
+        return f"+{digits}"
+    elif digits.startswith('8') and len(digits) == 11:
+        return f"+7{digits[1:]}"
+    else:
+        return f"+{digits}" if digits else ''
+
+
+def format_date(date_str):
+    """Приводит дату к формату dd-mm-yyyy"""
+    if pd.isna(date_str) or not str(date_str).strip():
+        return ''
+
+    date_str = str(date_str).strip()
+
+    try:
+        # Пробуем разные форматы дат
+        if '-' in date_str and len(date_str.split('-')[0]) == 2:
+            # Уже в формате dd-mm-yyyy
+            return date_str
+
+        # Парсим дату из других форматов
+        date_formats = [
+            '%Y-%m-%d', '%d.%m.%Y', '%d/%m/%Y',
+            '%d%m%Y', '%Y%m%d', '%d-%b-%y'
+        ]
+
+        for fmt in date_formats:
+            try:
+                dt = datetime.strptime(date_str, fmt)
+                return dt.strftime('%d-%m-%Y')
+            except ValueError:
+                continue
+
+        return date_str  # Если не удалось распарсить, оставляем как есть
+    except:
+        return date_str  # В случае ошибки оставляем оригинальное значение
 
 
 """

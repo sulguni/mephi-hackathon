@@ -1,19 +1,25 @@
 import datetime
+import sqlite3
 
 import aiosqlite
 
-from aiogram import F, Router
+from aiogram import F, Router, types
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, BufferedInputFile
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.types import (Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, BufferedInputFile,
+                           FSInputFile)
 from aiogram.fsm.context import FSMContext
+from openpyxl.styles import Alignment, Font
+
 import states
 import pandas as pd
 import io
 import db
 from datetime import datetime
+import logging
 
 router = Router()
-
+logger = logging.getLogger(__name__)
 admin_kb= [
         [InlineKeyboardButton(text="Редактировать данные доноров", callback_data='donor_edit')],
         [InlineKeyboardButton(text="Изменить информацию в боте", callback_data='bot_edit')],
@@ -27,7 +33,9 @@ admin_kb= [
 
 keyboard = InlineKeyboardMarkup(inline_keyboard=admin_kb)
 
-
+"""
+Два хендлера админ-панели со всеми кнопками
+"""
 @router.message(Command('admin'), states.IsAdmin())
 async def admin_command(message: Message) -> None:
     await message.answer('Добро пожаловать в панель организатора!\n'
@@ -45,17 +53,29 @@ kb_edit_return = [
 ]
 keyboard_edit_return = InlineKeyboardMarkup(inline_keyboard=kb_edit_return)
 
+
+
+"""
+Меню выбора редактирования пользователя добавить/изменить
+"""
 @router.callback_query(F.data == "donor_edit")
 async def donor_edit(callback: CallbackQuery):
 
-    await callback.message.edit_text("Введите номер телефона пользователя, чьи данные вы хотите изменить",
+    await callback.message.edit_text("Выберите, что хотите изменить",
                                      reply_markup=keyboard_edit_return)
 
+"""
+Ввод номера телефона по форме +70000000000 для изменения данных пользователя
+"""
 @router.callback_query(F.data == 'edit_by_phone')
 async def start_edit_by_phone(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("Введите номер телефона донора для редактирования:")
+    await callback.message.edit_text("Введите номер телефона пользователя, чьи данные вы хотите изменить.\n"
+                                     "Формат: +70000000000:")
     await state.set_state(states.EditDonor.waiting_phone)
 
+"""
+Выбор изменяемого параметра и его замена
+"""
 @router.message(states.EditDonor.waiting_phone, F.text.regexp(r'^\+?\d{11}$'))
 async def select_donor_field(message: Message, state: FSMContext):
     buttons = [
@@ -84,7 +104,6 @@ async def select_field(callback: CallbackQuery, state: FSMContext):
     await state.set_state(states.EditDonor.waiting_value)
     await callback.answer()
 
-
 @router.message(states.EditDonor.waiting_value)
 async def save_changes(message: Message, state: FSMContext):
     data = await state.get_data()
@@ -111,6 +130,9 @@ async def save_changes(message: Message, state: FSMContext):
         await state.clear()
 
 
+"""
+Добавление нового пользователя по одному или списком. Добавление в таблицу Donors
+"""
 @router.callback_query(F.data == 'add_user')
 async def start_add_donors(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
@@ -126,7 +148,6 @@ async def start_add_donors(callback: CallbackQuery, state: FSMContext):
         "Петров,Пётр,Петрович,Сотрудник,+79261234567,0,1,,2023-02-20,тел.123-456,0,1194604421"
     )
     await state.set_state(states.AddDonorsState.waiting_for_text)
-
 
 @router.message(states.AddDonorsState.waiting_for_text)
 async def handle_text_list(message: Message, state: FSMContext):
@@ -179,27 +200,241 @@ kb_return = [
 keyboard_return = InlineKeyboardMarkup(inline_keyboard=kb_return)
 
 
-
+"""
+Изменения информации о боте (заглушка)
+"""
 @router.callback_query(F.data == "bot_edit")
 async def donor_edit(callback: CallbackQuery):
     await callback.message.edit_text("Выберите, что хотите изменить",
                                      reply_markup=keyboard_return)
 
+"""
+Просмотр статистики просто зарегистрированных на дату и тех кто сдал кровь.
+Также возвращает exel файл
+"""
 @router.callback_query(F.data == "view_statistics")
 async def donor_edit(callback: CallbackQuery):
-    await callback.message.edit_text("Статистика:",
-                                     reply_markup=keyboard_return)
+    try:
+        async with aiosqlite.connect(db.DATABASE_NAME) as conn:
+            # Запрос с преобразованием форматов дат
+            query = """
+                SELECT 
+                    dd.Date AS dd_date,
+                    dd.donor_center AS center,
+                    COUNT(dd_data.donorID) AS total_registrations,
+                    SUM(CASE WHEN dd_data.complete = 1 THEN 1 ELSE 0 END) AS completed_donations
+                FROM DD dd
+                LEFT JOIN donors_data dd_data ON 
+                    -- Преобразуем дату из DD в формат YYYY-MM-DD для сравнения
+                    CASE 
+                        WHEN length(dd.Date) = 8 THEN 
+                            substr(dd.Date, 5, 4) || '-' || substr(dd.Date, 3, 2) || '-' || substr(dd.Date, 1, 2)
+                        WHEN length(dd.Date) = 10 AND dd.Date LIKE '__-__-____' THEN 
+                            substr(dd.Date, 7, 4) || '-' || substr(dd.Date, 4, 2) || '-' || substr(dd.Date, 1, 2)
+                        ELSE dd.Date
+                    END = dd_data.Date
+                GROUP BY dd.Date, dd.donor_center
+                ORDER BY 
+                    CASE 
+                        WHEN length(dd.Date) = 8 THEN 
+                            substr(dd.Date, 5, 4) || substr(dd.Date, 3, 2) || substr(dd.Date, 1, 2)
+                        WHEN length(dd.Date) = 10 AND dd.Date LIKE '__-__-____' THEN 
+                            substr(dd.Date, 7, 4) || substr(dd.Date, 4, 2) || substr(dd.Date, 1, 2)
+                        ELSE dd.Date
+                    END DESC,
+                    dd.donor_center
+                """
 
+            cursor = await conn.execute(query)
+            stats = await cursor.fetchall()
+
+            if not stats:
+                await callback.message.answer("Нет данных о донорских акциях")
+                return
+
+            # Формируем текстовый отчет
+            report = "📊 Статистика по донорским акциям:\n\n"
+            report += "Дата       | Центр      | Регистраций | Завершено\n"
+            report += "-----------------------------------------------\n"
+
+            current_date = None
+            for row in stats:
+                # Форматируем дату из DD (исходный формат)
+                raw_date = row[0]
+                try:
+                    if len(raw_date) == 8 and raw_date.isdigit():  # Формат ДДММГГГГ
+                        formatted_date = f"{raw_date[:2]}.{raw_date[2:4]}.{raw_date[4:]}"
+                    elif len(raw_date) == 10 and '-' in raw_date:  # Формат ДД-ММ-ГГГГ
+                        formatted_date = raw_date.replace('-', '.')
+                    else:
+                        formatted_date = raw_date
+                except:
+                    formatted_date = raw_date
+
+                # Добавляем пустую строку между разными датами
+                if current_date != row[0]:
+                    current_date = row[0]
+                    report += "\n"
+
+                report += (f"{formatted_date.ljust(10)} | {str(row[1]).ljust(10)} | "
+                           f"{str(row[2]).center(11)} | {row[3]}\n")
+
+            # Создаем Excel-отчет
+            excel_buffer = io.BytesIO()
+
+            # Преобразуем даты для Excel
+            excel_data = []
+            for row in stats:
+                raw_date = row[0]
+                try:
+                    if len(raw_date) == 8 and raw_date.isdigit():  # Формат ДДММГГГГ
+                        excel_date = f"{raw_date[:2]}.{raw_date[2:4]}.{raw_date[4:]}"
+                    elif len(raw_date) == 10 and '-' in raw_date:  # Формат ДД-ММ-ГГГГ
+                        excel_date = raw_date.replace('-', '.')
+                    else:
+                        excel_date = raw_date
+                except:
+                    excel_date = raw_date
+
+                excel_data.append([excel_date, row[1], row[2], row[3]])
+
+            df = pd.DataFrame(excel_data, columns=['Date', 'Центр', 'Регистрации', 'Завершено'])
+            df.to_excel(excel_buffer, index=False, engine='openpyxl')
+            excel_buffer.seek(0)
+
+            # Отправляем оба варианта
+            await callback.message.answer(report)
+            await callback.message.answer_document(
+                BufferedInputFile(
+                    excel_buffer.getvalue(),
+                    filename="Статистика_акций.xlsx"
+                ),
+                caption="Подробная статистика (регистрации/завершено)"
+            )
+
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка при получении статистики: {str(e)}")
+    finally:
+        await callback.answer()
+
+
+"""
+Ответы на вопросы пользователей (заглушка)
+"""
 @router.callback_query(F.data == "reply_to_questions")
 async def donor_edit(callback: CallbackQuery):
     await callback.message.edit_text("Вопрос:",
                                      reply_markup=keyboard_return)
 
+"""
+Рассылка пользователям, зарегестрированным на ближайшую донацию
+"""
 @router.callback_query(F.data == "newsletter")
-async def donor_edit(callback: CallbackQuery):
-    await callback.message.edit_text("Выберите категорию для рассылки",
-                                     reply_markup=keyboard_return)
+async def newsletter_menu(callback: types.CallbackQuery):
+    buttons = [
+        [types.InlineKeyboardButton(
+            text="Рассылка зарегистрированным на ближайший ДД",
+            callback_data="newsletter_nearest"
+        )],
+        [types.InlineKeyboardButton(
+            text="Назад",
+            callback_data="admin_menu"
+        )]
+    ]
 
+    await callback.message.edit_text(
+        text="<b>Меню рассылки</b>\nВыберите тип рассылки:",
+        parse_mode="HTML",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "newsletter_nearest")
+async def newsletter_nearest_dd(callback: types.CallbackQuery, state: FSMContext):
+    nearest_date = await get_nearest_future_date()
+    if not nearest_date:
+        await callback.message.edit_text(
+            text="❌ Нет доступных дат для рассылки",
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+                [types.InlineKeyboardButton(text="Назад", callback_data="newsletter")]
+            ]))
+        return
+
+    recipients = await get_recipients_for_date(nearest_date)
+    if not recipients:
+        await callback.message.edit_text(
+            text=f"❌ На {nearest_date} нет зарегистрированных пользователей",
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+                [types.InlineKeyboardButton(text="Назад", callback_data="newsletter")]
+            ]))
+        return
+    await state.update_data(
+        newsletter_date=nearest_date,
+        recipient_ids=recipients
+    )
+    await state.set_state(states.NewsletterStates.waiting_for_message)
+
+    await callback.message.edit_text(
+        text=f"📅 Ближайший ДД: <b>{nearest_date}</b>\n"
+             f"👥 Зарегистрировано: <b>{len(recipients)}</b> человек\n\n"
+             "Введите сообщение для рассылки или /cancel для отмены:",
+        parse_mode="HTML",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="❌ Отмена", callback_data="newsletter")]
+        ])
+    )
+    await callback.answer()
+
+@router.message(states.NewsletterStates.waiting_for_message, F.text)
+async def process_newsletter_message(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    if not data.get('recipient_ids'):
+        await message.answer("❌ Нет получателей для рассылки. Начните заново.")
+        await state.clear()
+        return
+
+    try:
+        sent_count = 0
+        for user_id in data['recipient_ids']:
+            try:
+                await message.bot.send_message(
+                    chat_id=user_id,
+                    text=message.text
+                )
+                sent_count += 1
+                await  datetime.time.sleep(0.1)
+            except Exception as e:
+                logger.error(f"Error sending to {user_id}: {e}")
+
+        await message.answer(
+            f"✅ Рассылка завершена!\n"
+            f"Дата: <b>{data['newsletter_date']}</b>\n"
+            f"Отправлено: <b>{sent_count}/{len(data['recipient_ids'])}</b>",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Newsletter error: {e}")
+        await message.answer("❌ Ошибка при рассылке")
+    finally:
+        await state.clear()
+
+@router.message(Command("cancel"))
+async def cancel_newsletter(message: types.Message, state: FSMContext):
+    """Отмена рассылки"""
+    current_state = await state.get_state()
+    if current_state is None:
+        return
+
+    await state.clear()
+    await message.answer(
+        "❌ Рассылка отменена",
+        reply_markup=types.ReplyKeyboardRemove()
+    )
+
+
+"""
+Создание нового мероприятия. Добавление в таблицу DD
+"""
 @router.callback_query(F.data == "create_event")
 async def create_event(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("Для создания мероприятия введите дату (dd-mm-yyyy) и "
@@ -241,12 +476,45 @@ async def select_donor_field(message: Message, state: FSMContext):
     await message.answer(f"✅ Добавлено {added} событий")
     await state.clear()
 
+
+
+"""
+Загрузка данных в таблицу Donors_date через exel файл
+"""
 @router.callback_query(F.data == "upload_statistics")
 async def donor_edit(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("Для загрузки статистики отправьте файл в формате exel",
-                                     reply_markup=keyboard_return)
-    await state.set_state(states.DocumentState.waiting_for_document)
+    # Путь к вашей картинке (замените на реальный путь)
+    image_path = r"images/upload_stat.jpg"
 
+    try:
+        # Сначала отправляем картинку
+        photo = FSInputFile(image_path)
+        await callback.message.answer_photo(
+            photo,
+            caption="Пример файла для загрузки.\n"
+                    "должны содержаться все столбцы"
+        )
+
+        # Затем отправляем текстовое сообщение с клавиатурой
+        await callback.message.answer(
+            "Для загрузки статистики отправьте файл в формате Excel.\n"
+            "Принимаются только файлы формата .xlsx и .xls\n",
+            reply_markup=keyboard_return
+        )
+
+        # Устанавливаем состояние
+        await state.set_state(states.DocumentState.waiting_for_document)
+
+    except Exception as e:
+        await callback.message.answer(f"Ошибка загрузки инструкции: {str(e)}")
+        await callback.message.answer(
+            "Для загрузки статистики отправьте файл в формате Excel",
+            reply_markup=keyboard_return
+        )
+        await state.set_state(states.DocumentState.waiting_for_document)
+
+    finally:
+        await callback.answer()
 
 @router.message(states.DocumentState.waiting_for_document, F.document)
 async def handle_excel_document(message: Message):
@@ -328,12 +596,14 @@ async def handle_excel_document(message: Message):
 kb_stat = [
     [InlineKeyboardButton(text='Список мероприятий', callback_data='export_dd' )],
     [InlineKeyboardButton(text='Список доноров', callback_data='export_donors' )],
-    [InlineKeyboardButton(text='Списки на мероприятие', callback_data='export_donors_date' )],
+    [InlineKeyboardButton(text='Списки зарегистрированных на событие', callback_data='export_donors_date' )],
     [InlineKeyboardButton(text='Вернуться', callback_data='admin_menu')],
 ]
 keyboard_stat = InlineKeyboardMarkup(inline_keyboard=kb_stat)
 
-
+"""
+Хендлеры для получение файлов статистики из таблиц DD, Donors, donors_data
+"""
 @router.callback_query(F.data == "get_statistics")
 async def donor_edit(callback: CallbackQuery):
     await callback.message.edit_text("Выберите желаемую информацию",
@@ -434,10 +704,10 @@ async def export_donors_by_date(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("export_date_"))
 async def export_for_selected_date(callback: CallbackQuery):
     try:
-        selected_date = callback.data.split("_")[2]  # Получаем дату в формате dd-mm-yyyy
+        selected_date = callback.data.split("_")[2]
 
         async with aiosqlite.connect(db.DATABASE_NAME) as conn:
-            # Вариант 1: Ищем в DD в формате dd-mm-yyyy
+            # Получаем информацию о мероприятии
             event_cursor = await conn.execute(
                 "SELECT donor_center FROM DD WHERE Date = ?",
                 (selected_date,)
@@ -450,7 +720,7 @@ async def export_for_selected_date(callback: CallbackQuery):
 
             event_name = event_info[0]
 
-            # Преобразуем дату в формат БД (yyyy-mm-dd)
+            # Преобразуем формат даты для поиска в donors_data
             try:
                 date_obj = datetime.strptime(selected_date, "%d-%m-%Y")
                 db_date = date_obj.strftime("%Y-%m-%d")
@@ -458,9 +728,11 @@ async def export_for_selected_date(callback: CallbackQuery):
                 await callback.message.answer("Неверный формат даты. Используйте ДД-ММ-ГГГГ")
                 return
 
-            # Ищем доноров для этой даты
+            # Модифицированный запрос с включением статуса Complete
             query = """
-            SELECT d.* 
+            SELECT 
+                d.*,
+                dd.complete AS Статус
             FROM Donors d
             JOIN donors_data dd ON d.donorID = dd.donorID
             WHERE dd.Date = ?
@@ -469,7 +741,7 @@ async def export_for_selected_date(callback: CallbackQuery):
             rows = await cursor.fetchall()
 
             if not rows:
-                # Дополнительная проверка - возможно дата в другом формате
+                # Дополнительная проверка альтернативного формата даты
                 alt_cursor = await conn.execute(query, (selected_date,))
                 alt_rows = await alt_cursor.fetchall()
 
@@ -481,30 +753,116 @@ async def export_for_selected_date(callback: CallbackQuery):
                 rows = alt_rows
 
             columns = [desc[0] for desc in cursor.description]
-            df = pd.DataFrame(rows, columns=columns)
 
-            # Создаем Excel
+            # Создаем DataFrame и преобразуем статус в читаемый формат
+            df = pd.DataFrame(rows, columns=columns)
+            df['Статус'] = df['Статус'].apply(lambda x: 'Да' if x == 1 else 'Нет')
+
+            # Создаем Excel файл с улучшенным форматированием
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Доноры')
 
+                # Получаем объект листа для форматирования
                 worksheet = writer.sheets['Доноры']
-                worksheet.cell(row=1, column=len(columns) + 1,
-                               value=f"Мероприятие: {event_name}")
-                worksheet.cell(row=2, column=len(columns) + 1,
-                               value=f"Дата: {selected_date}")
+
+                # Добавляем информацию о мероприятии
+                worksheet.cell(row=1, column=len(columns) + 1, value=f"Мероприятие: {event_name}")
+                worksheet.cell(row=2, column=len(columns) + 1, value=f"Дата: {selected_date}")
+
+                # Форматируем заголовки
+                for col in worksheet.iter_cols(min_row=1, max_row=1):
+                    for cell in col:
+                        cell.font = Font(bold=True)
+                        cell.alignment = Alignment(horizontal='center')
+
+                # Автонастройка ширины столбцов
+                for column_cells in worksheet.columns:
+                    length = max(len(str(cell.value)) for cell in column_cells)
+                    worksheet.column_dimensions[column_cells[0].column_letter].width = length + 2
 
             excel_buffer.seek(0)
 
             await callback.message.answer_document(
                 BufferedInputFile(
                     excel_buffer.getvalue(),
-                    filename=f"Доноры_{selected_date.replace('-', '_')}.xlsx"
+                    filename=f"Список_доноров_{selected_date.replace('-', '_')}.xlsx"
                 ),
-                caption=f"Список доноров на {selected_date} ({event_name})"
+                caption=f"Список доноров на {selected_date} ({event_name})\nСтатус: 'Да' - донация завершена, 'Нет' - не завершена"
             )
 
     except Exception as e:
-        await callback.message.answer(f"❌ Ошибка: {str(e)}")
+        await callback.message.answer(f"❌ Ошибка при экспорте: {str(e)}")
     finally:
         await callback.answer()
+
+
+async def get_nearest_future_date():
+    try:
+        conn = sqlite3.connect(db.DATABASE_NAME)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT date FROM DD")
+        all_dates = [row[0] for row in cursor.fetchall()]
+
+        future_dates = []
+        current_date = datetime.now()
+
+        for date_str in all_dates:
+            try:
+                date_obj = datetime.strptime(date_str, "%d-%m-%Y")
+                if date_obj > current_date:
+                    future_dates.append((date_obj, date_str))  # Сохраняем и объект, и строку
+            except ValueError as e:
+                logger.error(f"Ошибка парсинга даты {date_str}: {e}")
+
+        if not future_dates:
+            return None
+
+        nearest_date_obj, nearest_date_str = min(future_dates, key=lambda x: x[0])
+        return nearest_date_str
+
+    except Exception as e:
+        logger.error(f"Error getting nearest date: {e}")
+        return None
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+
+async def get_recipients_for_date(date_str):
+    try:
+        conn = sqlite3.connect(db.DATABASE_NAME)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT donorID FROM donors_data 
+            WHERE Data = ?
+        """, (date_str,))
+
+        return [row[0] for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Error getting recipients: {e}")
+        return []
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+
+async def get_recipients_for_date(date):
+    try:
+        conn = sqlite3.connect(db.DATABASE_NAME)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT donorID FROM donors_data 
+            WHERE Date = ?
+        """, (date,))
+
+        return [row[0] for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Error getting recipients: {e}")
+        return []
+    finally:
+        if 'conn' in locals():
+            conn.close()

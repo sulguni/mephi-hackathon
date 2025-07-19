@@ -305,7 +305,6 @@ async def about_me(callback: types.CallbackQuery):
 def parse_custom_date(date_str):
     """Парсит дату в формате DD-MM-YYYY с обработкой возможных ошибок"""
     try:
-        # Удаляем возможные пробелы и преобразуем дату
         date_str = date_str.strip()
         return datetime.strptime(date_str, "%d-%m-%Y")
     except ValueError as e:
@@ -330,12 +329,10 @@ async def register_for_dd(callback: types.CallbackQuery):
         conn = sqlite3.connect('db.db')
         cursor = conn.cursor()
 
-        # Получаем все даты из таблицы DD
         cursor.execute("SELECT Date FROM DD")
         all_dates = [row[0] for row in cursor.fetchall()]
         logger.info(f"Все даты из базы: {all_dates}")
 
-        # Фильтруем только валидные будущие даты
         future_dates = []
         current_date = datetime.now()
 
@@ -350,10 +347,8 @@ async def register_for_dd(callback: types.CallbackQuery):
             await callback.message.answer("На данный момент нет доступных дат для регистрации.")
             return
 
-        # Сортируем даты по хронологии
         future_dates.sort(key=lambda x: parse_custom_date(x))
 
-        # Создаем кнопки с доступными датами
         buttons = []
         for date in future_dates:
             buttons.append([types.InlineKeyboardButton(
@@ -361,7 +356,6 @@ async def register_for_dd(callback: types.CallbackQuery):
                 callback_data=f"register_date_{date}"
             )])
 
-        # Добавляем кнопку "Назад"
         buttons.append([types.InlineKeyboardButton(
             text="Назад",
             callback_data="menu"
@@ -396,14 +390,12 @@ async def process_date_selection(callback: types.CallbackQuery):
     try:
         conn = sqlite3.connect('db.db')
         cursor = conn.cursor()
-
-        # Проверка существования пользователя в базе Donors
+        
         cursor.execute("SELECT 1 FROM Donors WHERE donorID = ?", (user_id,))
         if not cursor.fetchone():
             await callback.message.answer("Сначала пройдите регистрацию в боте!")
             return
 
-        # Проверка существующей регистрации
         cursor.execute("""
             SELECT 1 FROM donors_data 
             WHERE donorID = ? AND Date = ?
@@ -412,13 +404,11 @@ async def process_date_selection(callback: types.CallbackQuery):
         if cursor.fetchone():
             await callback.message.answer("Вы уже зарегистрированы на эту дату!")
             return
-
-        # Определяем статус донора
+            
         cursor.execute("SELECT GroupID FROM Donors WHERE donorID = ?", (user_id,))
         group_result = cursor.fetchone()
         donor_status = "Донор" if group_result and group_result[0] else "Сотрудник"
 
-        # Регистрация
         cursor.execute("""
             INSERT INTO donors_data (Date, donorID, donor_status)
             VALUES (?, ?, ?)

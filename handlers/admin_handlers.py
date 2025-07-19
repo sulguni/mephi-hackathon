@@ -153,15 +153,15 @@ async def handle_text_list(message: Message, state: FSMContext):
                     last_fmba = parts[8] if len(parts) > 8 else None
                     contacts = parts[9] if len(parts) > 9 else None
                     stranger = int(parts[10]) if len(parts) > 10 and parts[10] else 0
-                    donorsID = int(parts[11]) if len(parts) > 11 and parts[11] else 0
+                    donorID = int(parts[11]) if len(parts) > 11 and parts[11] else 0
 
                     await con.execute(
                         """INSERT OR REPLACE INTO Donors
                         (Name, GroupID, Phone,
-                         Gavrilova, FMBA, LastGavrilov, LastFMBA, Contacts, Stranger, donorsID)
+                         Gavrilova, FMBA, LastGavrilov, LastFMBA, Contacts, Stranger, donorID)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (full_name, group_id, phone,
-                         gavrilova, fmba, last_gavrilov, last_fmba, contacts, stranger, donorsID)
+                         gavrilova, fmba, last_gavrilov, last_fmba, contacts, stranger, donorID)
                     )
                     added += 1
             except Exception:

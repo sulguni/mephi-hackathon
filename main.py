@@ -74,6 +74,7 @@ async def handle_confirm_name(query: CallbackQuery, state: FSMContext):
                          (d["name"], query.from_user.id, d["phone"]))
     await query.message.edit_reply_markup(reply_markup=None)
     await query.message.edit_text("ФИО сохранено.")
+    await state.clear()
     await send_agreement(query)
 
 @dp.callback_query(F.data == "edit_name", F.message)

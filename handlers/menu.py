@@ -479,7 +479,7 @@ async def send_online_test_link(callback: types.CallbackQuery):
     )
 
     await callback.message.edit_text(
-        text="<a href='https://yadonor.ru/donorstvo/gde-sdat/where/'>🔍 Здесь вы можете найти другие центры донорства</a>",
+        text="<a href='https://yadonor.ru/donorstvo/gde-sdat/where/'>🔍 Здесь вы можете найти другие центры донорства в вашем городе</a>",
         parse_mode="HTML",
         disable_web_page_preview=True,
         reply_markup=keyboard

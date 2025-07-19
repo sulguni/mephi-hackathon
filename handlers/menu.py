@@ -419,8 +419,12 @@ async def process_date_selection(callback: types.CallbackQuery):
             
         cursor.execute("SELECT GroupID FROM Donors WHERE donorID = ?", (user_id,))
         group_result = cursor.fetchone()
-        donor_status = "Донор" if group_result and group_result[0] else "Сотрудник"
-
+        if group_result[0].lower() ==  'сотрудник':
+            donor_status = 'Сотрудник'
+        elif group_result == '':
+            donor_status = 'Внешний донор'
+        else:
+            donor_status = 'Донор'
         cursor.execute("""
             INSERT INTO donors_data (Date, donorID, donor_status)
             VALUES (?, ?, ?)

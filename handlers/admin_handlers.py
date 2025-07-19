@@ -1,9 +1,11 @@
 import datetime
+import sqlite3
 
 import aiosqlite
 
-from aiogram import F, Router
+from aiogram import F, Router, types
 from aiogram.filters import Command
+from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 import states
@@ -11,9 +13,11 @@ import pandas as pd
 import io
 import db
 from datetime import datetime
-
+import logging
+class NewsletterStates(StatesGroup):
+    waiting_for_message = State()
 router = Router()
-
+logger = logging.getLogger(__name__)
 admin_kb= [
         [InlineKeyboardButton(text="Редактировать данные доноров", callback_data='donor_edit')],
         [InlineKeyboardButton(text="Изменить информацию в боте", callback_data='bot_edit')],
@@ -195,10 +199,109 @@ async def donor_edit(callback: CallbackQuery):
     await callback.message.edit_text("Вопрос:",
                                      reply_markup=keyboard_return)
 
+
 @router.callback_query(F.data == "newsletter")
-async def donor_edit(callback: CallbackQuery):
-    await callback.message.edit_text("Выберите категорию для рассылки",
-                                     reply_markup=keyboard_return)
+async def newsletter_menu(callback: types.CallbackQuery):
+    buttons = [
+        [types.InlineKeyboardButton(
+            text="Рассылка зарегистрированным на ближайший ДД",
+            callback_data="newsletter_nearest"
+        )],
+        [types.InlineKeyboardButton(
+            text="Назад",
+            callback_data="admin_menu"
+        )]
+    ]
+
+    await callback.message.edit_text(
+        text="<b>Меню рассылки</b>\nВыберите тип рассылки:",
+        parse_mode="HTML",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
+    await callback.answer()
+@router.callback_query(F.data == "newsletter_nearest")
+async def newsletter_nearest_dd(callback: types.CallbackQuery, state: FSMContext):
+    nearest_date = await get_nearest_future_date()
+    if not nearest_date:
+        await callback.message.edit_text(
+            text="❌ Нет доступных дат для рассылки",
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+                [types.InlineKeyboardButton(text="Назад", callback_data="newsletter")]
+            ]))
+        return
+
+    recipients = await get_recipients_for_date(nearest_date)
+    if not recipients:
+        await callback.message.edit_text(
+            text=f"❌ На {nearest_date} нет зарегистрированных пользователей",
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+                [types.InlineKeyboardButton(text="Назад", callback_data="newsletter")]
+            ]))
+        return
+    await state.update_data(
+        newsletter_date=nearest_date,
+        recipient_ids=recipients
+    )
+    await state.set_state(NewsletterStates.waiting_for_message)
+
+    await callback.message.edit_text(
+        text=f"📅 Ближайший ДД: <b>{nearest_date}</b>\n"
+             f"👥 Зарегистрировано: <b>{len(recipients)}</b> человек\n\n"
+             "Введите сообщение для рассылки или /cancel для отмены:",
+        parse_mode="HTML",
+        reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[
+            [types.InlineKeyboardButton(text="❌ Отмена", callback_data="newsletter")]
+        ])
+    )
+    await callback.answer()
+
+
+@router.message(NewsletterStates.waiting_for_message, F.text)
+async def process_newsletter_message(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    if not data.get('recipient_ids'):
+        await message.answer("❌ Нет получателей для рассылки. Начните заново.")
+        await state.clear()
+        return
+
+    try:
+        sent_count = 0
+        for user_id in data['recipient_ids']:
+            try:
+                await message.bot.send_message(
+                    chat_id=user_id,
+                    text=message.text
+                )
+                sent_count += 1
+                await  datetime.time.sleep(0.1)
+            except Exception as e:
+                logger.error(f"Error sending to {user_id}: {e}")
+
+        await message.answer(
+            f"✅ Рассылка завершена!\n"
+            f"Дата: <b>{data['newsletter_date']}</b>\n"
+            f"Отправлено: <b>{sent_count}/{len(data['recipient_ids'])}</b>",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Newsletter error: {e}")
+        await message.answer("❌ Ошибка при рассылке")
+    finally:
+        await state.clear()
+
+
+@router.message(Command("cancel"))
+async def cancel_newsletter(message: types.Message, state: FSMContext):
+    """Отмена рассылки"""
+    current_state = await state.get_state()
+    if current_state is None:
+        return
+
+    await state.clear()
+    await message.answer(
+        "❌ Рассылка отменена",
+        reply_markup=types.ReplyKeyboardRemove()
+    )
 
 @router.callback_query(F.data == "create_event")
 async def create_event(callback: CallbackQuery, state: FSMContext):
@@ -434,10 +537,9 @@ async def export_donors_by_date(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("export_date_"))
 async def export_for_selected_date(callback: CallbackQuery):
     try:
-        selected_date = callback.data.split("_")[2]  # Получаем дату в формате dd-mm-yyyy
+        selected_date = callback.data.split("_")[2]
 
         async with aiosqlite.connect(db.DATABASE_NAME) as conn:
-            # Вариант 1: Ищем в DD в формате dd-mm-yyyy
             event_cursor = await conn.execute(
                 "SELECT donor_center FROM DD WHERE Date = ?",
                 (selected_date,)
@@ -450,7 +552,6 @@ async def export_for_selected_date(callback: CallbackQuery):
 
             event_name = event_info[0]
 
-            # Преобразуем дату в формат БД (yyyy-mm-dd)
             try:
                 date_obj = datetime.strptime(selected_date, "%d-%m-%Y")
                 db_date = date_obj.strftime("%Y-%m-%d")
@@ -458,7 +559,6 @@ async def export_for_selected_date(callback: CallbackQuery):
                 await callback.message.answer("Неверный формат даты. Используйте ДД-ММ-ГГГГ")
                 return
 
-            # Ищем доноров для этой даты
             query = """
             SELECT d.* 
             FROM Donors d
@@ -483,7 +583,6 @@ async def export_for_selected_date(callback: CallbackQuery):
             columns = [desc[0] for desc in cursor.description]
             df = pd.DataFrame(rows, columns=columns)
 
-            # Создаем Excel
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Доноры')
@@ -508,3 +607,74 @@ async def export_for_selected_date(callback: CallbackQuery):
         await callback.message.answer(f"❌ Ошибка: {str(e)}")
     finally:
         await callback.answer()
+
+
+async def get_nearest_future_date():
+    try:
+        conn = sqlite3.connect('db.db')
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT date FROM DD")
+        all_dates = [row[0] for row in cursor.fetchall()]
+
+        future_dates = []
+        current_date = datetime.now()
+
+        for date_str in all_dates:
+            try:
+                date_obj = datetime.strptime(date_str, "%d-%m-%Y")
+                if date_obj > current_date:
+                    future_dates.append((date_obj, date_str))  # Сохраняем и объект, и строку
+            except ValueError as e:
+                logger.error(f"Ошибка парсинга даты {date_str}: {e}")
+
+        if not future_dates:
+            return None
+
+        nearest_date_obj, nearest_date_str = min(future_dates, key=lambda x: x[0])
+        return nearest_date_str
+
+    except Exception as e:
+        logger.error(f"Error getting nearest date: {e}")
+        return None
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+
+async def get_recipients_for_date(date_str):
+    try:
+        conn = sqlite3.connect('db.db')
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT donorID FROM donors_data 
+            WHERE Data = ?
+        """, (date_str,))
+
+        return [row[0] for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Error getting recipients: {e}")
+        return []
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+
+async def get_recipients_for_date(date):
+    try:
+        conn = sqlite3.connect('db.db')
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT donorID FROM donors_data 
+            WHERE Date = ?
+        """, (date,))
+
+        return [row[0] for row in cursor.fetchall()]
+    except Exception as e:
+        logger.error(f"Error getting recipients: {e}")
+        return []
+    finally:
+        if 'conn' in locals():
+            conn.close()

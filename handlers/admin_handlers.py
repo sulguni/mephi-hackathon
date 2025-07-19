@@ -33,7 +33,9 @@ admin_kb= [
 
 keyboard = InlineKeyboardMarkup(inline_keyboard=admin_kb)
 
-
+"""
+Два хендлера админ-панели со всеми кнопками
+"""
 @router.message(Command('admin'), states.IsAdmin())
 async def admin_command(message: Message) -> None:
     await message.answer('Добро пожаловать в панель организатора!\n'
@@ -51,17 +53,29 @@ kb_edit_return = [
 ]
 keyboard_edit_return = InlineKeyboardMarkup(inline_keyboard=kb_edit_return)
 
+
+
+"""
+Меню выбора редактирования пользователя добавить/изменить
+"""
 @router.callback_query(F.data == "donor_edit")
 async def donor_edit(callback: CallbackQuery):
 
-    await callback.message.edit_text("Введите номер телефона пользователя, чьи данные вы хотите изменить",
+    await callback.message.edit_text("Выберите, что хотите изменить",
                                      reply_markup=keyboard_edit_return)
 
+"""
+Ввод номера телефона по форме +70000000000 для изменения данных пользователя
+"""
 @router.callback_query(F.data == 'edit_by_phone')
 async def start_edit_by_phone(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("Введите номер телефона донора для редактирования:")
+    await callback.message.edit_text("Введите номер телефона пользователя, чьи данные вы хотите изменить.\n"
+                                     "Формат: +70000000000:")
     await state.set_state(states.EditDonor.waiting_phone)
 
+"""
+Выбор изменяемого параметра и его замена
+"""
 @router.message(states.EditDonor.waiting_phone, F.text.regexp(r'^\+?\d{11}$'))
 async def select_donor_field(message: Message, state: FSMContext):
     buttons = [
@@ -90,7 +104,6 @@ async def select_field(callback: CallbackQuery, state: FSMContext):
     await state.set_state(states.EditDonor.waiting_value)
     await callback.answer()
 
-
 @router.message(states.EditDonor.waiting_value)
 async def save_changes(message: Message, state: FSMContext):
     data = await state.get_data()
@@ -117,6 +130,9 @@ async def save_changes(message: Message, state: FSMContext):
         await state.clear()
 
 
+"""
+Добавление нового пользователя по одному или списком. Добавление в таблицу Donors
+"""
 @router.callback_query(F.data == 'add_user')
 async def start_add_donors(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
@@ -132,7 +148,6 @@ async def start_add_donors(callback: CallbackQuery, state: FSMContext):
         "Петров,Пётр,Петрович,Сотрудник,+79261234567,0,1,,2023-02-20,тел.123-456,0,1194604421"
     )
     await state.set_state(states.AddDonorsState.waiting_for_text)
-
 
 @router.message(states.AddDonorsState.waiting_for_text)
 async def handle_text_list(message: Message, state: FSMContext):
@@ -185,13 +200,18 @@ kb_return = [
 keyboard_return = InlineKeyboardMarkup(inline_keyboard=kb_return)
 
 
-
+"""
+Изменения информации о боте (заглушка)
+"""
 @router.callback_query(F.data == "bot_edit")
 async def donor_edit(callback: CallbackQuery):
     await callback.message.edit_text("Выберите, что хотите изменить",
                                      reply_markup=keyboard_return)
 
-
+"""
+Просмотр статистики просто зарегистрированных на дату и тех кто сдал кровь.
+Также возвращает exel файл
+"""
 @router.callback_query(F.data == "view_statistics")
 async def donor_edit(callback: CallbackQuery):
     try:
@@ -297,12 +317,18 @@ async def donor_edit(callback: CallbackQuery):
     finally:
         await callback.answer()
 
+
+"""
+Ответы на вопросы пользователей (заглушка)
+"""
 @router.callback_query(F.data == "reply_to_questions")
 async def donor_edit(callback: CallbackQuery):
     await callback.message.edit_text("Вопрос:",
                                      reply_markup=keyboard_return)
 
-
+"""
+Рассылка пользователям, зарегестрированным на ближайшую донацию
+"""
 @router.callback_query(F.data == "newsletter")
 async def newsletter_menu(callback: types.CallbackQuery):
     buttons = [
@@ -322,6 +348,7 @@ async def newsletter_menu(callback: types.CallbackQuery):
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=buttons)
     )
     await callback.answer()
+
 @router.callback_query(F.data == "newsletter_nearest")
 async def newsletter_nearest_dd(callback: types.CallbackQuery, state: FSMContext):
     nearest_date = await get_nearest_future_date()
@@ -358,7 +385,6 @@ async def newsletter_nearest_dd(callback: types.CallbackQuery, state: FSMContext
     )
     await callback.answer()
 
-
 @router.message(states.NewsletterStates.waiting_for_message, F.text)
 async def process_newsletter_message(message: types.Message, state: FSMContext):
     data = await state.get_data()
@@ -392,7 +418,6 @@ async def process_newsletter_message(message: types.Message, state: FSMContext):
     finally:
         await state.clear()
 
-
 @router.message(Command("cancel"))
 async def cancel_newsletter(message: types.Message, state: FSMContext):
     """Отмена рассылки"""
@@ -406,6 +431,10 @@ async def cancel_newsletter(message: types.Message, state: FSMContext):
         reply_markup=types.ReplyKeyboardRemove()
     )
 
+
+"""
+Создание нового мероприятия. Добавление в таблицу DD
+"""
 @router.callback_query(F.data == "create_event")
 async def create_event(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("Для создания мероприятия введите дату (dd-mm-yyyy) и "
@@ -447,12 +476,45 @@ async def select_donor_field(message: Message, state: FSMContext):
     await message.answer(f"✅ Добавлено {added} событий")
     await state.clear()
 
+
+
+"""
+Загрузка данных в таблицу Donors_date через exel файл
+"""
 @router.callback_query(F.data == "upload_statistics")
 async def donor_edit(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("Для загрузки статистики отправьте файл в формате exel",
-                                     reply_markup=keyboard_return)
-    await state.set_state(states.DocumentState.waiting_for_document)
+    # Путь к вашей картинке (замените на реальный путь)
+    image_path = r"images/upload_stat.jpg"
 
+    try:
+        # Сначала отправляем картинку
+        photo = FSInputFile(image_path)
+        await callback.message.answer_photo(
+            photo,
+            caption="Пример файла для загрузки.\n"
+                    "должны содержаться все столбцы"
+        )
+
+        # Затем отправляем текстовое сообщение с клавиатурой
+        await callback.message.answer(
+            "Для загрузки статистики отправьте файл в формате Excel.\n"
+            "Принимаются только файлы формата .xlsx и .xls\n",
+            reply_markup=keyboard_return
+        )
+
+        # Устанавливаем состояние
+        await state.set_state(states.DocumentState.waiting_for_document)
+
+    except Exception as e:
+        await callback.message.answer(f"Ошибка загрузки инструкции: {str(e)}")
+        await callback.message.answer(
+            "Для загрузки статистики отправьте файл в формате Excel",
+            reply_markup=keyboard_return
+        )
+        await state.set_state(states.DocumentState.waiting_for_document)
+
+    finally:
+        await callback.answer()
 
 @router.message(states.DocumentState.waiting_for_document, F.document)
 async def handle_excel_document(message: Message):
@@ -534,12 +596,14 @@ async def handle_excel_document(message: Message):
 kb_stat = [
     [InlineKeyboardButton(text='Список мероприятий', callback_data='export_dd' )],
     [InlineKeyboardButton(text='Список доноров', callback_data='export_donors' )],
-    [InlineKeyboardButton(text='Списки на мероприятие', callback_data='export_donors_date' )],
+    [InlineKeyboardButton(text='Списки зарегистрированных на событие', callback_data='export_donors_date' )],
     [InlineKeyboardButton(text='Вернуться', callback_data='admin_menu')],
 ]
 keyboard_stat = InlineKeyboardMarkup(inline_keyboard=kb_stat)
 
-
+"""
+Хендлеры для получение файлов статистики из таблиц DD, Donors, donors_data
+"""
 @router.callback_query(F.data == "get_statistics")
 async def donor_edit(callback: CallbackQuery):
     await callback.message.edit_text("Выберите желаемую информацию",

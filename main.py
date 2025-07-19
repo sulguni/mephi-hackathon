@@ -26,52 +26,74 @@ dp = Dispatcher()
 
 @dp.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext) -> None:
-    if await db.seen_user(message.from_user.id):
-        await message.reply("С возращением!")
+    user = await db.find_user_by_id(message.from_user.id)
+    if user:
+        t = "С возращением!"
+        if user.phone == "":
+            t += " Регистрация не завершена, для завершения введите номер телефона"
+            await state.set_state(states.UserState.phone)
+        elif user.name == "":
+            t += " Регистрация не завершена, для завершения введите ФИО"
+            await state.set_state(states.UserState.edit_name)
+        await message.reply(t)
+        await state.update_data(new=False)
     else:
-        await db.mark_seen(message.from_user.id)
-
         await message.answer('Привет, я бот для помощи участникам и организаторам донорских дней в МИФИ. Для начала тебе нужно зарегестрироваться.\n'
-                         ' Пожалуйста, введи свой номер телефона')
+                         'Пожалуйста, введи свой номер телефона')
         await state.set_state(states.UserState.phone)
+        await state.update_data(new=True)
 
 @dp.message(states.UserState.phone)
-async def phone_number_msg(message: Message):
+async def phone_number_msg(message: Message, state: FSMContext):
     t = (message.text or "").strip()
     if re.match(r"\+\d+", t):
         user = await db.find_user_by_phone(t)
-        if user != None:
-            await handle_seen_user(message, user)
+        await state.update_data(phone=t)
+        if user:
+            await state.update_data(name=user.name)
+            await message.answer(f"Нашли пользователя с таким номером. Вы {user.name}?", reply_markup=INLINE_KEYBOARD([
+                [INLINE_BTN("Да", "confirm_name"), INLINE_BTN("Нет, редактировать ФИО", "edit_name")]
+            ]))
         else:
-            await try_finding_user_by_name(message)
+            await message.answer("Пожалуйста, введите ваше ФИО")
+            await state.set_state(states.UserState.edit_name)
     else:
-        await message.answer("Введите корректный номер телефона (начинается с плюса и последовательности цифр)")
+        await message.answer("Введите корректный номер телефона (плюс и далее последовательности цифр)")
 
-async def handle_seen_user(message: Message, user: db.User):
-    await message.answer(f"Нашли пользователя с таким номером. Вы {user.name}?", reply_markup=INLINE_KEYBOARD([
-        [INLINE_BTN("Да", "confirm_name"), INLINE_BTN("Нет, редактировать ФИО", "edit_name")]
-    ]))
 
 @dp.callback_query(F.data == "confirm_name", F.message)
-async def handle_confirm_name(query: CallbackQuery):
+async def handle_confirm_name(query: CallbackQuery, state: FSMContext):
+    d = await state.get_data()
+    if await db.execute("select Name from Donors where Name = ? AND IFNULL(Phone, '') = ''", (d["name"],), True):
+        await db.execute("UPDATE Donors set Phone = ?, donorID = ? where Name = ? AND IFNULL(Phone, '') = ''",
+                         (d["phone"], query.from_user.id, d["name"]))
+    elif await db.execute("select Phone from Donors where Phone = ?", (d["phone"],), True):
+        await db.execute("UPDATE Donors set Name = ?, donorID = ? where Phone = ?", (d["name"], query.from_user.id, d["phone"]))
+    else:
+        await db.execute("INSERT INTO Donors (Name, donorID, Phone) values (?, ?, ?)",
+                         (d["name"], query.from_user.id, d["phone"]))
     await query.message.edit_reply_markup(reply_markup=None)
+    await query.message.edit_text("ФИО сохранено.")
     await send_agreement(query)
 
 @dp.callback_query(F.data == "edit_name", F.message)
 async def handle_edit_name(query: CallbackQuery, state: FSMContext):
-    await query.message.edit_text(text="Введите ваше ФИО")
+    await query.message.edit_text(text="Пожалуйста, введите ваше ФИО")
     await state.set_state(states.UserState.edit_name)
 
-
+@dp.message(states.UserState.edit_name)
+async def handle_name_msg(message: Message, state: FSMContext):
+    if message.text is None:
+        await message.answer("Отправьте текст")
+        return
+    t = message.text
+    await state.update_data(name=t)
+    await message.answer(f"Ваше ФИО: {t}, верно?", reply_markup=INLINE_KEYBOARD([
+        [INLINE_BTN("Да", "confirm_name"), INLINE_BTN("Нет, редактировать ФИО", "edit_name")]
+    ]))
 
 async def send_agreement(chat: CallbackQuery):
-    chat.answer("Примите соглашение")
-
-async def try_finding_user_by_name(message: Message):
-
-    pass
-
-
+    await chat.answer("Примите соглашение")
 
 async def main() -> None:
     # Initialize Bot instance with default bot properties which will be passed to all API calls

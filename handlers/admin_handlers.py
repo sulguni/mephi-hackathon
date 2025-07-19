@@ -436,56 +436,75 @@ async def export_for_selected_date(callback: CallbackQuery):
     try:
         selected_date = callback.data.split("_")[2]  # Получаем дату в формате dd-mm-yyyy
 
-        # Преобразуем дату в формат yyyy-mm-dd для сравнения
-        date_obj = datetime.strptime(selected_date, "%d-%m-%Y")
-        db_date_format = date_obj.strftime("%Y-%m-%d")  # Формат для БД
-
         async with aiosqlite.connect(db.DATABASE_NAME) as conn:
-            # Получаем данные доноров для выбранной даты
+            # Вариант 1: Ищем в DD в формате dd-mm-yyyy
+            event_cursor = await conn.execute(
+                "SELECT donor_center FROM DD WHERE Date = ?",
+                (selected_date,)
+            )
+            event_info = await event_cursor.fetchone()
+
+            if not event_info:
+                await callback.message.answer(f"Мероприятие на {selected_date} не найдено")
+                return
+
+            event_name = event_info[0]
+
+            # Преобразуем дату в формат БД (yyyy-mm-dd)
+            try:
+                date_obj = datetime.strptime(selected_date, "%d-%m-%Y")
+                db_date = date_obj.strftime("%Y-%m-%d")
+            except ValueError:
+                await callback.message.answer("Неверный формат даты. Используйте ДД-ММ-ГГГГ")
+                return
+
+            # Ищем доноров для этой даты
             query = """
-            SELECT d.* FROM Donors d
+            SELECT d.* 
+            FROM Donors d
             JOIN donors_data dd ON d.donorID = dd.donorID
             WHERE dd.Date = ?
             """
-            cursor = await conn.execute(query, (db_date_format,))
+            cursor = await conn.execute(query, (db_date,))
             rows = await cursor.fetchall()
-            columns = [desc[0] for desc in cursor.description]
 
             if not rows:
-                await callback.message.answer(f"Нет данных за {selected_date}")
-                return
+                # Дополнительная проверка - возможно дата в другом формате
+                alt_cursor = await conn.execute(query, (selected_date,))
+                alt_rows = await alt_cursor.fetchall()
 
-            # Создаем DataFrame
+                if not alt_rows:
+                    await callback.message.answer(
+                        f"На мероприятии '{event_name}' ({selected_date}) нет зарегистрированных доноров"
+                    )
+                    return
+                rows = alt_rows
+
+            columns = [desc[0] for desc in cursor.description]
             df = pd.DataFrame(rows, columns=columns)
 
-            # Добавляем информацию о мероприятии
-            event_cursor = await conn.execute(
-                "SELECT donor_center FROM DD WHERE Date = ?",
-                (selected_date,)  # Здесь используем исходный формат даты
-            )
-            event_info = await event_cursor.fetchone()
-            event_name = event_info[0] if event_info else "Неизвестное мероприятие"
-
+            # Создаем Excel
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Доноры')
 
-                # Добавляем информацию о мероприятии
                 worksheet = writer.sheets['Доноры']
-                worksheet.cell(row=1, column=len(columns) + 2,
-                               value=f"Мероприятие: {event_name} ({selected_date})")
+                worksheet.cell(row=1, column=len(columns) + 1,
+                               value=f"Мероприятие: {event_name}")
+                worksheet.cell(row=2, column=len(columns) + 1,
+                               value=f"Дата: {selected_date}")
 
             excel_buffer.seek(0)
 
             await callback.message.answer_document(
                 BufferedInputFile(
                     excel_buffer.getvalue(),
-                    filename=f"Доноры_{selected_date}.xlsx"
+                    filename=f"Доноры_{selected_date.replace('-', '_')}.xlsx"
                 ),
                 caption=f"Список доноров на {selected_date} ({event_name})"
             )
 
     except Exception as e:
-        await callback.message.answer(f"❌ Ошибка при экспорте: {str(e)}")
+        await callback.message.answer(f"❌ Ошибка: {str(e)}")
     finally:
         await callback.answer()

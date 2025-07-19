@@ -6,16 +6,18 @@ import aiosqlite
 from aiogram import F, Router, types
 from aiogram.filters import Command
 from aiogram.fsm.state import StatesGroup, State
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, BufferedInputFile
+from aiogram.types import (Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, BufferedInputFile,
+                           FSInputFile)
 from aiogram.fsm.context import FSMContext
+from openpyxl.styles import Alignment, Font
+
 import states
 import pandas as pd
 import io
 import db
 from datetime import datetime
 import logging
-class NewsletterStates(StatesGroup):
-    waiting_for_message = State()
+
 router = Router()
 logger = logging.getLogger(__name__)
 admin_kb= [
@@ -189,10 +191,111 @@ async def donor_edit(callback: CallbackQuery):
     await callback.message.edit_text("Выберите, что хотите изменить",
                                      reply_markup=keyboard_return)
 
+
 @router.callback_query(F.data == "view_statistics")
 async def donor_edit(callback: CallbackQuery):
-    await callback.message.edit_text("Статистика:",
-                                     reply_markup=keyboard_return)
+    try:
+        async with aiosqlite.connect(db.DATABASE_NAME) as conn:
+            # Запрос с преобразованием форматов дат
+            query = """
+                SELECT 
+                    dd.Date AS dd_date,
+                    dd.donor_center AS center,
+                    COUNT(dd_data.donorID) AS total_registrations,
+                    SUM(CASE WHEN dd_data.complete = 1 THEN 1 ELSE 0 END) AS completed_donations
+                FROM DD dd
+                LEFT JOIN donors_data dd_data ON 
+                    -- Преобразуем дату из DD в формат YYYY-MM-DD для сравнения
+                    CASE 
+                        WHEN length(dd.Date) = 8 THEN 
+                            substr(dd.Date, 5, 4) || '-' || substr(dd.Date, 3, 2) || '-' || substr(dd.Date, 1, 2)
+                        WHEN length(dd.Date) = 10 AND dd.Date LIKE '__-__-____' THEN 
+                            substr(dd.Date, 7, 4) || '-' || substr(dd.Date, 4, 2) || '-' || substr(dd.Date, 1, 2)
+                        ELSE dd.Date
+                    END = dd_data.Date
+                GROUP BY dd.Date, dd.donor_center
+                ORDER BY 
+                    CASE 
+                        WHEN length(dd.Date) = 8 THEN 
+                            substr(dd.Date, 5, 4) || substr(dd.Date, 3, 2) || substr(dd.Date, 1, 2)
+                        WHEN length(dd.Date) = 10 AND dd.Date LIKE '__-__-____' THEN 
+                            substr(dd.Date, 7, 4) || substr(dd.Date, 4, 2) || substr(dd.Date, 1, 2)
+                        ELSE dd.Date
+                    END DESC,
+                    dd.donor_center
+                """
+
+            cursor = await conn.execute(query)
+            stats = await cursor.fetchall()
+
+            if not stats:
+                await callback.message.answer("Нет данных о донорских акциях")
+                return
+
+            # Формируем текстовый отчет
+            report = "📊 Статистика по донорским акциям:\n\n"
+            report += "Дата       | Центр      | Регистраций | Завершено\n"
+            report += "-----------------------------------------------\n"
+
+            current_date = None
+            for row in stats:
+                # Форматируем дату из DD (исходный формат)
+                raw_date = row[0]
+                try:
+                    if len(raw_date) == 8 and raw_date.isdigit():  # Формат ДДММГГГГ
+                        formatted_date = f"{raw_date[:2]}.{raw_date[2:4]}.{raw_date[4:]}"
+                    elif len(raw_date) == 10 and '-' in raw_date:  # Формат ДД-ММ-ГГГГ
+                        formatted_date = raw_date.replace('-', '.')
+                    else:
+                        formatted_date = raw_date
+                except:
+                    formatted_date = raw_date
+
+                # Добавляем пустую строку между разными датами
+                if current_date != row[0]:
+                    current_date = row[0]
+                    report += "\n"
+
+                report += (f"{formatted_date.ljust(10)} | {str(row[1]).ljust(10)} | "
+                           f"{str(row[2]).center(11)} | {row[3]}\n")
+
+            # Создаем Excel-отчет
+            excel_buffer = io.BytesIO()
+
+            # Преобразуем даты для Excel
+            excel_data = []
+            for row in stats:
+                raw_date = row[0]
+                try:
+                    if len(raw_date) == 8 and raw_date.isdigit():  # Формат ДДММГГГГ
+                        excel_date = f"{raw_date[:2]}.{raw_date[2:4]}.{raw_date[4:]}"
+                    elif len(raw_date) == 10 and '-' in raw_date:  # Формат ДД-ММ-ГГГГ
+                        excel_date = raw_date.replace('-', '.')
+                    else:
+                        excel_date = raw_date
+                except:
+                    excel_date = raw_date
+
+                excel_data.append([excel_date, row[1], row[2], row[3]])
+
+            df = pd.DataFrame(excel_data, columns=['Date', 'Центр', 'Регистрации', 'Завершено'])
+            df.to_excel(excel_buffer, index=False, engine='openpyxl')
+            excel_buffer.seek(0)
+
+            # Отправляем оба варианта
+            await callback.message.answer(report)
+            await callback.message.answer_document(
+                BufferedInputFile(
+                    excel_buffer.getvalue(),
+                    filename="Статистика_акций.xlsx"
+                ),
+                caption="Подробная статистика (регистрации/завершено)"
+            )
+
+    except Exception as e:
+        await callback.message.answer(f"❌ Ошибка при получении статистики: {str(e)}")
+    finally:
+        await callback.answer()
 
 @router.callback_query(F.data == "reply_to_questions")
 async def donor_edit(callback: CallbackQuery):
@@ -242,7 +345,7 @@ async def newsletter_nearest_dd(callback: types.CallbackQuery, state: FSMContext
         newsletter_date=nearest_date,
         recipient_ids=recipients
     )
-    await state.set_state(NewsletterStates.waiting_for_message)
+    await state.set_state(states.NewsletterStates.waiting_for_message)
 
     await callback.message.edit_text(
         text=f"📅 Ближайший ДД: <b>{nearest_date}</b>\n"
@@ -256,7 +359,7 @@ async def newsletter_nearest_dd(callback: types.CallbackQuery, state: FSMContext
     await callback.answer()
 
 
-@router.message(NewsletterStates.waiting_for_message, F.text)
+@router.message(states.NewsletterStates.waiting_for_message, F.text)
 async def process_newsletter_message(message: types.Message, state: FSMContext):
     data = await state.get_data()
     if not data.get('recipient_ids'):
@@ -540,6 +643,7 @@ async def export_for_selected_date(callback: CallbackQuery):
         selected_date = callback.data.split("_")[2]
 
         async with aiosqlite.connect(db.DATABASE_NAME) as conn:
+            # Получаем информацию о мероприятии
             event_cursor = await conn.execute(
                 "SELECT donor_center FROM DD WHERE Date = ?",
                 (selected_date,)
@@ -552,6 +656,7 @@ async def export_for_selected_date(callback: CallbackQuery):
 
             event_name = event_info[0]
 
+            # Преобразуем формат даты для поиска в donors_data
             try:
                 date_obj = datetime.strptime(selected_date, "%d-%m-%Y")
                 db_date = date_obj.strftime("%Y-%m-%d")
@@ -559,8 +664,11 @@ async def export_for_selected_date(callback: CallbackQuery):
                 await callback.message.answer("Неверный формат даты. Используйте ДД-ММ-ГГГГ")
                 return
 
+            # Модифицированный запрос с включением статуса Complete
             query = """
-            SELECT d.* 
+            SELECT 
+                d.*,
+                dd.complete AS Статус
             FROM Donors d
             JOIN donors_data dd ON d.donorID = dd.donorID
             WHERE dd.Date = ?
@@ -569,7 +677,7 @@ async def export_for_selected_date(callback: CallbackQuery):
             rows = await cursor.fetchall()
 
             if not rows:
-                # Дополнительная проверка - возможно дата в другом формате
+                # Дополнительная проверка альтернативного формата даты
                 alt_cursor = await conn.execute(query, (selected_date,))
                 alt_rows = await alt_cursor.fetchall()
 
@@ -581,37 +689,53 @@ async def export_for_selected_date(callback: CallbackQuery):
                 rows = alt_rows
 
             columns = [desc[0] for desc in cursor.description]
-            df = pd.DataFrame(rows, columns=columns)
 
+            # Создаем DataFrame и преобразуем статус в читаемый формат
+            df = pd.DataFrame(rows, columns=columns)
+            df['Статус'] = df['Статус'].apply(lambda x: 'Да' if x == 1 else 'Нет')
+
+            # Создаем Excel файл с улучшенным форматированием
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Доноры')
 
+                # Получаем объект листа для форматирования
                 worksheet = writer.sheets['Доноры']
-                worksheet.cell(row=1, column=len(columns) + 1,
-                               value=f"Мероприятие: {event_name}")
-                worksheet.cell(row=2, column=len(columns) + 1,
-                               value=f"Дата: {selected_date}")
+
+                # Добавляем информацию о мероприятии
+                worksheet.cell(row=1, column=len(columns) + 1, value=f"Мероприятие: {event_name}")
+                worksheet.cell(row=2, column=len(columns) + 1, value=f"Дата: {selected_date}")
+
+                # Форматируем заголовки
+                for col in worksheet.iter_cols(min_row=1, max_row=1):
+                    for cell in col:
+                        cell.font = Font(bold=True)
+                        cell.alignment = Alignment(horizontal='center')
+
+                # Автонастройка ширины столбцов
+                for column_cells in worksheet.columns:
+                    length = max(len(str(cell.value)) for cell in column_cells)
+                    worksheet.column_dimensions[column_cells[0].column_letter].width = length + 2
 
             excel_buffer.seek(0)
 
             await callback.message.answer_document(
                 BufferedInputFile(
                     excel_buffer.getvalue(),
-                    filename=f"Доноры_{selected_date.replace('-', '_')}.xlsx"
+                    filename=f"Список_доноров_{selected_date.replace('-', '_')}.xlsx"
                 ),
-                caption=f"Список доноров на {selected_date} ({event_name})"
+                caption=f"Список доноров на {selected_date} ({event_name})\nСтатус: 'Да' - донация завершена, 'Нет' - не завершена"
             )
 
     except Exception as e:
-        await callback.message.answer(f"❌ Ошибка: {str(e)}")
+        await callback.message.answer(f"❌ Ошибка при экспорте: {str(e)}")
     finally:
         await callback.answer()
 
 
 async def get_nearest_future_date():
     try:
-        conn = sqlite3.connect('db.db')
+        conn = sqlite3.connect(db.DATABASE_NAME)
         cursor = conn.cursor()
 
         cursor.execute("SELECT date FROM DD")
@@ -644,7 +768,7 @@ async def get_nearest_future_date():
 
 async def get_recipients_for_date(date_str):
     try:
-        conn = sqlite3.connect('db.db')
+        conn = sqlite3.connect(db.DATABASE_NAME)
         cursor = conn.cursor()
 
         cursor.execute("""
@@ -663,7 +787,7 @@ async def get_recipients_for_date(date_str):
 
 async def get_recipients_for_date(date):
     try:
-        conn = sqlite3.connect('db.db')
+        conn = sqlite3.connect(db.DATABASE_NAME)
         cursor = conn.cursor()
 
         cursor.execute("""

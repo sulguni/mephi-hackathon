@@ -23,6 +23,9 @@ class EventState(StatesGroup):
 class DocumentState(StatesGroup):
     waiting_for_document = State()
 
+class NewsletterStates(StatesGroup):
+    waiting_for_message = State()
+
 admin_ids = [5235789211, 1194604421]
 
 

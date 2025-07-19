@@ -157,14 +157,14 @@ buttons = [
             callback_data="what_to_know"
         ),
         types.InlineKeyboardButton(
-            text="Регистрация на ДД",
-            callback_data="register_for_dd"
+            text="Мой профиль",
+            callback_data="about_me"
         )
     ],
     [
         types.InlineKeyboardButton(
-            text="Обо мне",
-            callback_data="about_me"
+            text="Регистрация на ДД",
+            callback_data="register_for_dd"
         )
     ],
     [

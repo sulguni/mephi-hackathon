@@ -2,11 +2,12 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.filters import BaseFilter
 from aiogram.types import TelegramObject
 
-
+import db
 
 class UserState(StatesGroup):
     phone = State()
     edit_name = State()
+    group = State()
 
 
 class EditDonor(StatesGroup):
@@ -31,4 +32,12 @@ admin_ids = [5235789211, 1194604421]
 
 class IsAdmin(BaseFilter):
     async def __call__(self, obj: TelegramObject) -> bool:
-        return obj.from_user.id in admin_ids
+        return await db.get_user_state(obj.from_user.id) == 2
+
+class Accepted(BaseFilter):
+    async def __call__(self, obj: TelegramObject) -> bool:
+        return await db.get_user_state(obj.from_user.id) == 1
+
+class NotAccepted(BaseFilter):
+    async def __call__(self, obj: TelegramObject) -> bool:
+        return await db.get_user_state(obj.from_user.id) == 0

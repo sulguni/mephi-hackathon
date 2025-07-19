@@ -6,8 +6,8 @@ from os import getenv
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.filters import CommandStart, Command
+from aiogram.types import Message, CallbackQuery, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 import states
 from handlers import admin_handlers, menu
@@ -24,29 +24,45 @@ INLINE_KEYBOARD = lambda buttons: InlineKeyboardMarkup(inline_keyboard=buttons)
 
 dp = Dispatcher()
 
+@dp.message(Command("accept"))
+async def accept(message: Message, state: FSMContext):
+    await db.execute("insert into UserStates (UserID, state) values (?, ?)", (message.from_user.id, 1))
+    await command_start_handler(message, state)
+
+@dp.message(states.NotAccepted())
+async def not_accepted(message: Message):
+    await message.answer("Перед работой с ботом необходимо согласиться с <a href='https://drive.google.com/file/d/1lbAdchMWSQy-tnM-1NCd4qjYOHlMop6F/view?usp=sharing'>политикой обработки персональных данных</a>\n Для этого выполните: /accept")
+
 @dp.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext) -> None:
     user = await db.find_user_by_id(message.from_user.id)
     if user:
         t = "С возращением!"
+        phone = False
         if user.phone == "":
             t += " Регистрация не завершена, для завершения введите номер телефона"
             await state.set_state(states.UserState.phone)
+            phone = True
         elif user.name == "":
             t += " Регистрация не завершена, для завершения введите ФИО"
             await state.set_state(states.UserState.edit_name)
-        await message.reply(t)
+        await message.reply(t, reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Отправить номер", request_contact=True)]]) if phone else None)
         await state.update_data(new=False)
     else:
         await message.answer('Привет, я бот для помощи участникам и организаторам донорских дней в МИФИ. Для начала тебе нужно зарегестрироваться.\n'
-                         'Пожалуйста, введи свой номер телефона')
+                         'Пожалуйста, введи свой номер телефона', reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Отправить номер", request_contact=True)]]))
         await state.set_state(states.UserState.phone)
         await state.update_data(new=True)
 
+
 @dp.message(states.UserState.phone)
 async def phone_number_msg(message: Message, state: FSMContext):
-    t = (message.text or "").strip()
-    if re.match(r"\+\d+", t):
+    t = ""
+    if message.contact is not None:
+        t = message.contact.phone_number
+    elif message.text is not None:
+        t = message.text
+    if re.match(r"\+?[\d\-()]+", t):
         user = await db.find_user_by_phone(t)
         await state.update_data(phone=t)
         if user:
@@ -55,7 +71,7 @@ async def phone_number_msg(message: Message, state: FSMContext):
                 [INLINE_BTN("Да", "confirm_name"), INLINE_BTN("Нет, редактировать ФИО", "edit_name")]
             ]))
         else:
-            await message.answer("Пожалуйста, введите ваше ФИО")
+            await message.answer("Пожалуйста, введите ваше ФИО", reply_markup=None)
             await state.set_state(states.UserState.edit_name)
     else:
         await message.answer("Введите корректный номер телефона (плюс и далее последовательности цифр)")
@@ -75,7 +91,36 @@ async def handle_confirm_name(query: CallbackQuery, state: FSMContext):
     await query.message.edit_reply_markup(reply_markup=None)
     await query.message.edit_text("ФИО сохранено.")
     await state.clear()
-    await send_agreement(query)
+    await query.answer()
+    if await db.execute("select donorID from Donors where donorID = ? AND IFNULL(GroupID, '') = ''", (query.from_user.id,), True):
+        await query.message.answer("Кем вы являетесь?", reply_markup=INLINE_KEYBOARD(
+            [
+                [INLINE_BTN("Студент МИФИ", "student_role")],
+                [INLINE_BTN("Сотрудник МИФИ", "staff_role")],
+                [INLINE_BTN("Я не из МИФИ", "other_role")]
+            ]
+        ))
+    else:
+        await query.message.answer("Вы зарегистировались!", reply_markup=INLINE_KEYBOARD([[INLINE_BTN("В меню", "menu")]]))
+
+@dp.callback_query(F.data.endswith("_role"), F.message)
+async def handle_role(query: CallbackQuery, state: FSMContext):
+    await query.answer()
+    role = query.data.split('_')[0]
+    if role == "student":
+        await state.set_state(states.UserState.group)
+        await query.message.answer("Укажите вашу группу")
+    else:
+        await db.execute(f"update Donors set GroupID={'\"Сотрудник\"' if role == 'staff' else '\"\"'} where donorID = ?", (query.from_user.id,))
+        await query.message.answer("Вы зарегистировались!",
+                                   reply_markup=INLINE_KEYBOARD([[INLINE_BTN("В меню", "menu")]]))
+
+@dp.message(states.UserState.group, F.text)
+async def handle_group(message: Message, state: FSMContext):
+    await db.execute(f"update Donors set GroupID=? where donorID = ?",
+                     (message.text, message.from_user.id,))
+    await message.answer("Вы зарегистировались!", reply_markup=INLINE_KEYBOARD([[INLINE_BTN("В меню", "menu")]]))
+    await state.clear()
 
 @dp.callback_query(F.data == "edit_name", F.message)
 async def handle_edit_name(query: CallbackQuery, state: FSMContext):
@@ -93,8 +138,8 @@ async def handle_name_msg(message: Message, state: FSMContext):
         [INLINE_BTN("Да", "confirm_name"), INLINE_BTN("Нет, редактировать ФИО", "edit_name")]
     ]))
 
-async def send_agreement(chat: CallbackQuery):
-    await chat.answer("Примите соглашение")
+async def send_agreement(query: CallbackQuery):
+    await query.answer("Примите соглашение")
 
 async def main() -> None:
     # Initialize Bot instance with default bot properties which will be passed to all API calls

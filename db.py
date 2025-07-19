@@ -37,3 +37,9 @@ async def execute(query: str, params, fetch=False):
         if fetch:
             return await(cur.fetchone()) is not None
         return True
+
+async def get_user_state(id: int):
+    async with aiosqlite.connect(DATABASE_NAME) as con, con.cursor() as cur:
+        cur = await cur.execute("select state from UserStates where UserID = ?", (id,))
+        m = await cur.fetchone()
+        return 0 if not m else m[0]

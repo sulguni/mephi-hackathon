@@ -390,6 +390,7 @@ async def import_from_excel_process(message: Message, state: FSMContext):
         })
 
         # Обработка телефонов
+        df['Name'] = df['Name'].str.strip()
         df['Phone'] = df['Phone'].apply(clean_phone_number)
 
         # Обработка GroupID - первая буква заглавная, остальные строчные
@@ -869,6 +870,7 @@ async def donor_edit(callback: CallbackQuery, state: FSMContext):
     finally:
         await callback.answer()
 
+
 @router.message(states.DocumentState.waiting_for_document, F.document)
 async def handle_excel_document(message: Message):
     # Проверяем, что это Excel-файл
@@ -877,10 +879,8 @@ async def handle_excel_document(message: Message):
         return
 
     try:
-
         file_bytes = await message.bot.download(message.document, destination=io.BytesIO())
         file_bytes.seek(0)
-
 
         try:
             df = pd.read_excel(file_bytes)
@@ -894,35 +894,39 @@ async def handle_excel_document(message: Message):
             await message.answer(f"В файле отсутствуют обязательные колонки: {', '.join(missing)}")
             return
 
-
         async with aiosqlite.connect(db.DATABASE_NAME) as conn:
             total_added = 0
             errors = []
 
             for index, row in df.iterrows():
                 try:
+                    # Очищаем ФИО от лишних пробелов
+                    name = str(row['ФИО']).strip()
 
+                    # Преобразуем дату
                     date_str = pd.to_datetime(row['Дата акции']).strftime('%Y-%m-%d')
 
+                    # Ищем донора в базе
                     cursor = await conn.execute(
                         "SELECT donorID FROM Donors WHERE Name = ?",
-                        (row['ФИО'],)
+                        (name,)
                     )
                     donor = await cursor.fetchone()
                     if not donor:
-                        errors.append(f"Донор {row['ФИО']} не найден в базе")
+                        errors.append(f"Донор {name} не найден в базе")
                         continue
 
                     donor_id = donor[0]
 
-
+                    # Вставляем данные, включая имя
                     await conn.execute(
                         """INSERT OR REPLACE INTO donors_data 
-                        (Date, donorID, donor_status, donor_type, complete)
-                        VALUES (?, ?, ?, ?, ?)""",
+                        (Date, donorID, Name, donor_status, donor_type, complete)
+                        VALUES (?, ?, ?, ?, ?, ?)""",
                         (
                             date_str,
                             donor_id,
+                            name,  # Добавляем имя в запрос
                             int(row['Статус']),
                             int(row['Тип']),
                             int(row['Завершено'])
@@ -936,7 +940,7 @@ async def handle_excel_document(message: Message):
 
             await conn.commit()
 
-
+            # Формируем отчет
             report = f"✅ Успешно загружено: {total_added} записей"
             if errors:
                 report += f"\n\nОшибки ({len(errors)}):\n" + "\n".join(errors[:5])  # Показываем первые 5 ошибок

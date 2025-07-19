@@ -166,6 +166,18 @@ buttons = [
             text="Обо мне",
             callback_data="about_me"
         )
+    ],
+    [
+        types.InlineKeyboardButton(
+            text="Могу ли я быть донором?",
+            callback_data="online_test"
+        )
+    ],
+    [
+        types.InlineKeyboardButton(
+            text="Адреса других ЦД",
+            callback_data="addresses"
+        )
     ]
 ]
 
@@ -432,4 +444,44 @@ async def process_date_selection(callback: types.CallbackQuery):
         if 'conn' in locals():
             conn.close()
 
+    await callback.answer()
+
+
+@router.callback_query(F.data == "online_test")
+async def send_online_test_link(callback: types.CallbackQuery):
+    back_button = types.InlineKeyboardButton(
+        text="Назад",
+        callback_data="menu"
+    )
+
+    keyboard = types.InlineKeyboardMarkup(
+        inline_keyboard=[[back_button]]
+    )
+
+    await callback.message.edit_text(
+        text="🔍 Пройдите онлайн-тест для доноров:\n"
+             "<a href='https://donor.dostovernozdrav.ru/test/'>Тест на возможность сдачи крови</a>",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "addresses")
+async def send_online_test_link(callback: types.CallbackQuery):
+    back_button = types.InlineKeyboardButton(
+        text="Назад",
+        callback_data="menu"
+    )
+
+    keyboard = types.InlineKeyboardMarkup(
+        inline_keyboard=[[back_button]]
+    )
+
+    await callback.message.edit_text(
+        text="<a href='https://yadonor.ru/donorstvo/gde-sdat/where/'>🔍 Здесь вы можете найти другие центры донорства</a>",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=keyboard
+    )
     await callback.answer()
